@@ -6,6 +6,14 @@
     <title>GeM AI Auditor Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @media print {
+            body { background: white; padding: 0; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .shadow-sm, .border { box-shadow: none !important; border: 1px solid #ccc !important; }
+        }
+    </style>
 </head>
 <body class="bg-slate-50 min-h-screen p-4 md:p-8 font-sans text-slate-800">
 
@@ -14,14 +22,17 @@
         <header class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex items-center justify-between">
             <div>
                 <h1 class="text-2xl font-bold text-blue-900">GeM AI Auditor</h1>
-                <p class="text-sm text-slate-500">Automated Smart Procurement Verification</p>
+                <p class="text-sm text-slate-500">Integrated Procurement Verification Platform</p>
             </div>
-            <i data-lucide="shield-check" class="w-10 h-10 text-green-600"></i>
+            <div class="flex items-center space-x-2">
+                <span class="text-xs bg-blue-100 text-blue-800 font-bold px-2.5 py-1 rounded-full no-print">SIH26100</span>
+                <i data-lucide="shield-check" class="w-8 h-8 text-blue-900"></i>
+            </div>
         </header>
 
         <!-- Upload Section -->
-        <main class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h2 class="text-lg font-semibold mb-4">Upload Vendor Document</h2>
+        <main class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 no-print">
+            <h2 class="text-lg font-semibold mb-4 text-slate-700">Upload Bidder Document</h2>
             
             <div id="dropzone" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center hover:bg-blue-50 transition-colors">
                 <input type="file" id="fileInput" class="hidden" accept=".pdf,image/*">
@@ -30,37 +41,48 @@
                         <i data-lucide="upload-cloud" class="w-8 h-8"></i>
                     </div>
                     <span class="font-medium text-slate-700">Tap to upload PDF or Image</span>
-                    <span class="text-xs text-slate-400">Gemini Vision AI Engine</span>
+                    <span class="text-xs text-slate-400">Gemini 3.5 Multimodal Engine</span>
                 </label>
             </div>
 
             <!-- Loading State -->
             <div id="loading" class="hidden mt-6 text-center animate-pulse">
                 <i data-lucide="loader" class="w-8 h-8 mx-auto text-blue-600 animate-spin mb-2"></i>
-                <p class="text-sm text-slate-500">AI is analyzing document...</p>
+                <p class="text-sm text-slate-500 font-medium">Analyzing document against GeM compliance rules...</p>
             </div>
         </main>
 
         <!-- Results Section (Hidden by default) -->
         <div id="resultsCard" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
             <div class="flex justify-between items-center mb-6">
-                <h2 class="text-lg font-semibold">Verification Report</h2>
-                <span id="scoreBadge" class="px-4 py-1 rounded-full text-sm font-bold bg-gray-100">Score: --/100</span>
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-800">Compliance Audit Report</h2>
+                    <p id="reportDate" class="text-xs text-slate-400"></p>
+                </div>
+                <span id="scoreBadge" class="px-4 py-1.5 rounded-full text-sm font-bold bg-gray-100">Score: --/100</span>
             </div>
             
-            <div class="p-4 bg-slate-50 rounded-lg border border-slate-100 mb-6">
-                <p class="text-sm text-slate-600 font-medium">AI Summary:</p>
-                <p id="summaryText" class="text-sm text-slate-800 mt-1"></p>
+            <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-6">
+                <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">AI Context & Executive Summary</p>
+                <p id="summaryText" class="text-sm text-slate-700 leading-relaxed"></p>
             </div>
 
-            <div id="checksList" class="space-y-3">
+            <h3 class="text-sm font-bold text-slate-600 uppercase tracking-wider mb-3">Statutory Verification Checks</h3>
+            <div id="checksList" class="space-y-3 mb-6">
                 <!-- Checklist items injected via JS -->
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex justify-end space-x-3 pt-4 border-t border-slate-100 no-print">
+                <button onclick="window.print()" class="flex items-center space-x-2 bg-blue-900 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-800 transition">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    <span>Download Official PDF Report</span>
+                </button>
             </div>
         </div>
     </div>
 
     <script>
-        // Initialize Icons
         lucide.createIcons();
 
         const fileInput = document.getElementById('fileInput');
@@ -72,7 +94,6 @@
             const file = e.target.files[0];
             if (!file) return;
 
-            // Reset UI
             dropzone.classList.add('hidden');
             loading.classList.remove('hidden');
             resultsCard.classList.add('hidden');
@@ -81,7 +102,6 @@
             formData.append('file', file);
 
             try {
-                // Pointing directly to your live backend!
                 const response = await fetch('https://sih-gem-compliance.onrender.com/api/verify-pdf', {
                     method: 'POST',
                     body: formData
@@ -101,36 +121,37 @@
         });
 
         function renderResults(aiData) {
-            // Set Summary
+            document.getElementById('reportDate').innerText = `Generated on: ${new Date().toLocaleString()}`;
             document.getElementById('summaryText').innerText = aiData.summary || "No summary provided.";
 
-            // Set Score Badge
             const scoreBadge = document.getElementById('scoreBadge');
-            scoreBadge.innerText = `Score: ${aiData.compliance_score}`;
-            scoreBadge.className = `px-4 py-1 rounded-full text-sm font-bold ${
+            scoreBadge.innerText = `Score: ${aiData.compliance_score}/100`;
+            scoreBadge.className = `px-4 py-1.5 rounded-full text-sm font-bold ${
                 aiData.compliance_score > 70 ? 'bg-green-100 text-green-700' : 
-                aiData.compliance_score > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                aiData.compliance_score > 0 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
             }`;
 
-            // Set Checks List
             const checksList = document.getElementById('checksList');
-            checksList.innerHTML = ''; // Clear previous
+            checksList.innerHTML = '';
 
             aiData.checks.forEach(check => {
                 const isPass = check.status.toLowerCase() === 'pass';
                 const checkHtml = `
-                    <div class="flex items-center justify-between p-3 rounded-lg border ${isPass ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}">
+                    <div class="flex items-center justify-between p-3.5 rounded-xl border ${isPass ? 'bg-emerald-50/50 border-emerald-200' : 'bg-rose-50/50 border-rose-200'}">
                         <div>
                             <p class="text-sm font-semibold text-slate-800">${check.rule}</p>
-                            <p class="text-xs ${isPass ? 'text-green-700' : 'text-red-700'} font-mono mt-1">Found: ${check.found_value}</p>
+                            <p class="text-xs ${isPass ? 'text-emerald-700' : 'text-rose-700'} font-mono mt-0.5">Found: ${check.found_value}</p>
                         </div>
-                        <span class="px-2 py-1 rounded text-xs font-bold ${isPass ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}">
+                        <span class="px-2.5 py-1 rounded-md text-xs font-bold ${isPass ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
                             ${check.status.toUpperCase()}
                         </span>
                     </div>
                 `;
                 checksList.innerHTML += checkHtml;
             });
+
+            // Re-initialize icons for new elements
+            lucide.createIcons();
         }
     </script>
 </body>
