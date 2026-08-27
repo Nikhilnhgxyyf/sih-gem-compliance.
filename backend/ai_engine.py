@@ -7,7 +7,7 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def verify_compliance_with_ai(file_bytes: bytes, mime_type: str = "application/pdf"):
     # Initialize the fast, multimodal free tier model
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-3.6-flash")
     
     # We upgraded the prompt to also summarize what it sees
     prompt = """
