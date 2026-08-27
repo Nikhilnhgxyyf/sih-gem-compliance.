@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeM AI Auditor Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-50 min-h-screen p-4 md:p-8 font-sans text-slate-800">
+
+    <div class="max-w-3xl mx-auto space-y-6">
+        <!-- Header -->
+        <header class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-bold text-blue-900">GeM AI Auditor</h1>
+                <p class="text-sm text-slate-500">Automated Smart Procurement Verification</p>
+            </div>
+            <i data-lucide="shield-check" class="w-10 h-10 text-green-600"></i>
+        </header>
+
+        <!-- Upload Section -->
+        <main class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 class="text-lg font-semibold mb-4">Upload Vendor Document</h2>
+            
+            <div id="dropzone" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center hover:bg-blue-50 transition-colors">
+                <input type="file" id="fileInput" class="hidden" accept=".pdf,image/*">
+                <label for="fileInput" class="cursor-pointer flex flex-col items-center space-y-3">
+                    <div class="p-4 bg-blue-100 text-blue-600 rounded-full">
+                        <i data-lucide="upload-cloud" class="w-8 h-8"></i>
+                    </div>
+                    <span class="font-medium text-slate-700">Tap to upload PDF or Image</span>
+                    <span class="text-xs text-slate-400">Gemini Vision AI Engine</span>
+                </label>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loading" class="hidden mt-6 text-center animate-pulse">
+                <i data-lucide="loader" class="w-8 h-8 mx-auto text-blue-600 animate-spin mb-2"></i>
+                <p class="text-sm text-slate-500">AI is analyzing document...</p>
+            </div>
+        </main>
+
+        <!-- Results Section (Hidden by default) -->
+        <div id="resultsCard" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-lg font-semibold">Verification Report</h2>
+                <span id="scoreBadge" class="px-4 py-1 rounded-full text-sm font-bold bg-gray-100">Score: --/100</span>
+            </div>
+            
+            <div class="p-4 bg-slate-50 rounded-lg border border-slate-100 mb-6">
+                <p class="text-sm text-slate-600 font-medium">AI Summary:</p>
+                <p id="summaryText" class="text-sm text-slate-800 mt-1"></p>
+            </div>
+
+            <div id="checksList" class="space-y-3">
+                <!-- Checklist items injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        const fileInput = document.getElementById('fileInput');
+        const loading = document.getElementById('loading');
+        const resultsCard = document.getElementById('resultsCard');
+        const dropzone = document.getElementById('dropzone');
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Reset UI
+            dropzone.classList.add('hidden');
+            loading.classList.remove('hidden');
+            resultsCard.classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Pointing directly to your live backend!
+                const response = await fetch('https://sih-gem-compliance.onrender.com/api/verify-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                renderResults(data.ai_verification);
+                
+            } catch (error) {
+                alert("Failed to connect to backend server.");
+                console.error(error);
+            } finally {
+                loading.classList.add('hidden');
+                dropzone.classList.remove('hidden');
+                resultsCard.classList.remove('hidden');
+            }
+        });
+
+        function renderResults(aiData) {
+            // Set Summary
+            document.getElementById('summaryText').innerText = aiData.summary || "No summary provided.";
+
+            // Set Score Badge
+            const scoreBadge = document.getElementById('scoreBadge');
+            scoreBadge.innerText = `Score: ${aiData.compliance_score}`;
+            scoreBadge.className = `px-4 py-1 rounded-full text-sm font-bold ${
+                aiData.compliance_score > 70 ? 'bg-green-100 text-green-700' : 
+                aiData.compliance_score > 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+            }`;
+
+            // Set Checks List
+            const checksList = document.getElementById('checksList');
+            checksList.innerHTML = ''; // Clear previous
+
+            aiData.checks.forEach(check => {
+                const isPass = check.status.toLowerCase() === 'pass';
+                const checkHtml = `
+                    <div class="flex items-center justify-between p-3 rounded-lg border ${isPass ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}">
+                        <div>
+                            <p class="text-sm font-semibold text-slate-800">${check.rule}</p>
+                            <p class="text-xs ${isPass ? 'text-green-700' : 'text-red-700'} font-mono mt-1">Found: ${check.found_value}</p>
+                        </div>
+                        <span class="px-2 py-1 rounded text-xs font-bold ${isPass ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}">
+                            ${check.status.toUpperCase()}
+                        </span>
+                    </div>
+                `;
+                checksList.innerHTML += checkHtml;
+            });
+        }
+    </script>
+</body>
+</html>
