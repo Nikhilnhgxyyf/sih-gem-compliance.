@@ -366,3 +366,44 @@ async def stats():
         "decision": decision.decision,
         "compliance_score": decision.compliance_score,
                 }
+
+
+@app.get("/api/v3/state")
+async def get_engine_state():
+    rule_statuses = {
+        rid: engine.current_rule_states.get(rid, "REVIEW")
+        for rid in engine.rule_nodes
+    }
+
+    return {
+        "audit_id": engine.audit_id,
+        "tender_deadline": engine.tender_deadline.isoformat(),
+        "evidence": [
+            node.model_dump(mode="json")
+            for node in engine.evidence_nodes.values()
+        ],
+        "rules": [
+            rule.model_dump(mode="json")
+            for rule in engine.rule_nodes.values()
+        ],
+        "edges": [
+            edge.model_dump(mode="json")
+            for edge in engine.edges
+        ],
+        "rule_statuses": rule_statuses,
+        "ledger": [
+            event.model_dump(mode="json")
+            for event in engine.ledger
+        ]
+    }
+
+
+@app.get("/api/v3/blast-radius/{node_id}")
+async def blast_radius(node_id: str):
+    if node_id not in engine.evidence_nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Evidence node not found"
+        )
+
+    return engine.analyze_blast_radius(node_id)
