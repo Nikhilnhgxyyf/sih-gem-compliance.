@@ -62,33 +62,3 @@ Uploads a document for AI verification.
   }
 }
 
-Future Roadmap
-[ ] Integration with GSTN & MCA live validation APIs.
-[ ] Multi-document batch processing for bulk tender evaluation.
-[ ] Fraud & forgery detection via document metadata analysis
-
-5. Tap **Commit changes**.
-
----
-
-### Step 2: The 3-Minute SIH Demo Pitch Script
-
-When presenting to judges, follow this structure:
-
-| Time | Slide / Action | What to Say |
-|---|---|---|
-| **0:00 - 0:45** | **The Problem** | *"Manual document auditing in government procurement causes massive delays and human errors. Officers often have to manually check hundreds of scanned PDFs, PANs, and Udyam certificates."* |
-| **0:45 - 1:30** | **Live Failed Demo** | Upload the handwritten notes file (`1.3 ed.pdf`). Show how the AI detects it's an assignment, flags missing credentials, and scores it **0/100**. |
-| **1:30 - 2:15** | **Live Passed Demo** | Upload the valid text screenshot. Show how it instantly extracts the Udyam, GSTIN, and PAN numbers, gives a **100/100 score**, and turns green. |
-| **2:15 - 3:00** | **The Impact & PDF Export** | Tap **Download Official PDF Report** and show the print view. *"With one tap, the procurement officer gets an official audit certificate to attach to the tender file, reducing processing time from hours to 5 seconds."* |
-
----
-
-### Final Project Status Checklist
-
-- [x] Backend live on Render (`FastAPI`)
-- [x] Vision AI connected (`Gemini 3.5 Flash`)
-- [x] Frontend UI live on Vercel (`Tailwind CSS`)
-- [x] Dynamic Pass/Fail status & scoring
-- [x] PDF Audit Certificate export
-- [x] Repository documentation (`README.md`)
