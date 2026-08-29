@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://sih-gem-compliance.onrender.com";
 
 let state = {
 evaluation: null,
