@@ -27,19 +27,39 @@ v2 additions:
 
 import os
 import re
+import time
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from google import genai
 from google.genai import types
 
 from schemas import EvidenceNode, RuleNode, ASTNode
 
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+client: Optional[genai.Client] = None
 
-MODEL_NAME = "gemini-3.6-flash"
+# Flash-Lite is deliberately used for this prototype: extraction is the only
+# generative step and the deterministic engine makes every final decision.
+# It has lower latency/cost and is less prone to presentation-breaking spikes.
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+FALLBACK_MODEL_NAME = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+
+
+def _get_client() -> genai.Client:
+    """Initialise Gemini only when an extraction is requested.
+
+    This keeps health checks and deterministic API endpoints usable when a
+    local developer has not configured a Gemini key yet.
+    """
+    global client
+    if client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not configured on this server.")
+        client = genai.Client(api_key=api_key)
+    return client
 
 
 # --------------------------------------------------------------------------
@@ -85,6 +105,12 @@ class ExtractedRequirementNode(BaseModel):
     children: Optional[List["ExtractedRequirementNode"]] = Field(
         default=None, description="sub-requirements — only for AND / OR / NOT"
     )
+
+    @field_validator("weight", mode="before")
+    @classmethod
+    def default_missing_weight(cls, value):
+        """Accept null/missing LLM weights without rejecting useful output."""
+        return 10.0 if value is None else value
 
 
 ExtractedRequirementNode.model_rebuild()
@@ -155,22 +181,34 @@ def extract_from_documents(bidder_files: List[dict], tender_file: Optional[dict]
         contents.append(f"=== BIDDER DOCUMENT: {f['filename']} ===")
         contents.append(types.Part.from_bytes(data=f["data"], mime_type=f["mime_type"]))
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=ExtractionResult,
-            ),
-        )
-        result: Optional[ExtractionResult] = response.parsed
-        if result is None:
-            result = ExtractionResult.model_validate_json(response.text)
-        return result.model_dump()
-    except Exception as e:
-        return {"error": str(e), "status": "AI_EXTRACTION_FAILED"}
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        response_mime_type="application/json",
+        response_schema=ExtractionResult,
+    )
+    # A short retry covers transient 503 demand spikes. If Flash-Lite remains
+    # unavailable, use the configurable Flash fallback rather than making the
+    # officer re-upload documents.
+    attempts = [MODEL_NAME, MODEL_NAME, FALLBACK_MODEL_NAME]
+    last_error: Optional[Exception] = None
+    for attempt, model_name in enumerate(attempts):
+        try:
+            response = _get_client().models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            result: Optional[ExtractionResult] = response.parsed
+            if result is None:
+                result = ExtractionResult.model_validate_json(response.text)
+            payload = result.model_dump()
+            payload["extraction_model"] = model_name
+            return payload
+        except Exception as error:
+            last_error = error
+            if attempt < len(attempts) - 1:
+                time.sleep(0.5 * (attempt + 1))
+    return {"error": str(last_error), "status": "AI_EXTRACTION_FAILED"}
 
 
 def extract_bidder_only(bidder_files: List[dict]) -> dict:
@@ -193,6 +231,31 @@ def _coerce_value(raw: Optional[str]):
         return float(raw)
     except (ValueError, TypeError):
         return raw
+
+
+# Canonicalise common variants before nodes and rules reach the graph. This
+# prevents an extraction such as "annual_turnover" from silently disconnecting
+# from a tender rule written as "turnover".
+ENTITY_ALIASES = {
+    "annual_turnover": "turnover",
+    "annual_revenue": "turnover",
+    "revenue": "turnover",
+    "turn_over": "turnover",
+    "years_of_experience": "experience_years",
+    "experience": "experience_years",
+    "project_experience": "experience_years",
+    "udyam": "udyam_number",
+    "udyam_registration_number": "udyam_number",
+    "gst_number": "gstin",
+    "pan_number": "pan",
+}
+
+
+def canonical_entity_name(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")
+    return ENTITY_ALIASES.get(normalized, normalized)
 
 
 def _parse_iso_date(value: Optional[str]):
@@ -235,13 +298,13 @@ def _convert_requirement_node(node: dict, tender_closing: Optional[datetime], co
             years = 0
         anchor = tender_closing or datetime.now(timezone.utc)
         cutoff = anchor - relativedelta(years=years)
-        return ASTNode(op="DATE_AFTER", field=node.get("entity_name"), value=cutoff.strftime("%Y-%m-%d"))
+        return ASTNode(op="DATE_AFTER", field=canonical_entity_name(node.get("entity_name")), value=cutoff.strftime("%Y-%m-%d"))
 
     if op in ("AND", "OR", "NOT"):
         children = [_convert_requirement_node(c, tender_closing, counter) for c in (node.get("children") or [])]
         return ASTNode(op=op, children=children)
 
-    return ASTNode(op=op, field=node.get("entity_name"), value=_coerce_value(node.get("value")))
+    return ASTNode(op=op, field=canonical_entity_name(node.get("entity_name")), value=_coerce_value(node.get("value")))
 
 
 def build_engine_inputs(extraction: dict) -> tuple:
@@ -268,7 +331,7 @@ def build_engine_inputs(extraction: dict) -> tuple:
     for doc in extraction.get("documents", []):
         for fact in doc.get("facts", []):
             counter += 1
-            entity = fact["entity_name"].strip().lower()
+            entity = canonical_entity_name(fact["entity_name"])
             value = _coerce_value(fact["value"])
 
             evidence_nodes.append(EvidenceNode(

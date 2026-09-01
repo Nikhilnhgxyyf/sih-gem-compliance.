@@ -1457,3 +1457,16 @@ width: 60px;
 
 .rule-row.clickable { cursor: pointer; }
 .rule-row.clickable:hover { background: #f8fafc; }
+
+.rule-report-list { margin-top: 8px; }
+
+.rule-report {
+white-space: pre-wrap;
+overflow-wrap: anywhere;
+margin: 8px 0;
+padding: 10px;
+border-left: 3px solid var(--blue);
+background: #f8fafc;
+font: 10px/1.5 "JetBrains Mono", monospace;
+color: #334155;
+}
