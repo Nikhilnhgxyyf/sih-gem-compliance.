@@ -38,6 +38,49 @@ SUPPORTED_OPERATORS = {
     "RULE_REF",
 }
 
+MARGIN_PCT = 0.15
+
+
+def check_margin(left: float, right: float, confidence: float) -> Tuple[bool, float]:
+    """Return whether a numeric result is too close to auto-decide.
+
+    ``confidence`` is accepted to keep the decision-policy API explicit; a
+    narrow factual margin always wins over model confidence.
+    """
+    del confidence
+    if right == 0:
+        return False, 1.0
+    margin = abs(left - right) / abs(right)
+    return margin <= MARGIN_PCT, margin
+
+
+def format_rule_report(
+    rule: RuleNode,
+    evidence: EvidenceNode,
+    status: str,
+    margin: float,
+    confidence: float,
+) -> str:
+    """Produce a concise, provenance-backed officer-facing rule report."""
+    tag = "mandatory" if rule.is_mandatory else "optional"
+    if status == RuleStatus.REVIEW.value:
+        note = (f"Only {margin * 100:.0f}% from the cutoff — too close to auto-decide. "
+                "Flagged for officer review regardless of AI confidence.")
+    elif status == RuleStatus.PASS.value:
+        note = f"Well above threshold ({margin * 100:.0f}% margin) — auto-decided, no review needed."
+    else:
+        note = f"Well below threshold ({margin * 100:.0f}% margin) — auto-decided, no review needed."
+    status_line = f"Status: {status}" if status != RuleStatus.REVIEW.value else "Status: ⚠ REVIEW REQUIRED"
+    source = evidence.source_doc or "Unknown source"
+    page = f", page {evidence.page_number}" if evidence.page_number is not None else ""
+    return "\n".join([
+        f"Rule {rule.rule_id} — {rule.clause_text} ({tag})",
+        status_line,
+        f"Extracted value: {evidence.extracted_value}   |   AI confidence: {int(confidence * 100)}%",
+        f"Note: {note}",
+        f"Source: {source}{page}",
+    ])
+
 
 def extract_required_entities(ast: ASTNode) -> Set[str]:
     """
@@ -832,6 +875,15 @@ class ProcurementIntelligenceEngine:
 
             else:
                 passed = left < right
+
+            borderline, margin = check_margin(left, right, confidence)
+            if borderline:
+                return (
+                    RuleStatus.REVIEW,
+                    evidence_ids,
+                    f"{left} {ast.op} {right} is within {margin * 100:.1f}% of the cutoff; officer review required.",
+                    confidence,
+                )
 
             return (
                 RuleStatus.PASS if passed else RuleStatus.FAIL,

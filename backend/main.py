@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
-from engine import ProcurementIntelligenceEngine
+from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
 
 app = FastAPI(
@@ -288,6 +288,25 @@ async def bidder_report(bidder_id: str):
         else:
             evidence_by_risk["low"] += 1
 
+    rule_reports = []
+    for rule_id, rule in eng.rule_nodes.items():
+        evaluation = eng.current_rule_evaluations.get(rule_id) or eng.evaluate_rule(rule_id)
+        if not evaluation.evidence_ids:
+            continue
+        evidence = eng.evidence_nodes.get(evaluation.evidence_ids[0])
+        if evidence is None:
+            continue
+        margin = 1.0
+        if rule.ast.op in {">=", ">", "<=", "<"}:
+            try:
+                _, margin = check_margin(float(evidence.extracted_value), float(rule.ast.value), evidence.confidence)
+            except (TypeError, ValueError):
+                pass
+        rule_reports.append({
+            "rule_id": rule_id,
+            "text": format_rule_report(rule, evidence, evaluation.status.value, margin, evaluation.confidence_score),
+        })
+
     return {
         "bidder_id": bidder_id,
         "bidder_label": bidder_labels.get(bidder_id, bidder_id),
@@ -305,7 +324,12 @@ async def bidder_report(bidder_id: str):
         "review_triggers": decision.review_triggers,
         "ledger_length": len(eng.ledger),
         "latest_hash": eng.ledger[-1].event_hash if eng.ledger else None,
+        "rule_reports": rule_reports,
     }
+
+
+@app.get("/api/v3/bidders")
+async def list_bidders():
     """Side-by-side comparison across every bidder loaded this session."""
     rows = []
     for bidder_id, eng in engines.items():
@@ -421,21 +445,28 @@ async def officer_override(request: EvidenceCorrectionRequest):
 # is correct for the API but not something anyone's typing into a two-field
 # form. This takes the shape the UI actually collects and builds the
 # EvidenceNode itself.
-class SimpleCounterfactualRequest(BaseModel):
+class CounterfactualChange(BaseModel):
     entity_name: str
     extracted_value: str
 
 
+class SimpleCounterfactualRequest(BaseModel):
+    changes: List[CounterfactualChange]
+
+
 @app.post("/api/v3/counterfactual")
 async def counterfactual(request: SimpleCounterfactualRequest):
-    hypothetical = EvidenceNode(
-        node_id=f"HYP-{request.entity_name.upper()}",
-        entity_name=request.entity_name.strip().lower(),
-        extracted_value=_coerce(request.extracted_value),
-        confidence=1.0,
-        source_doc="officer_hypothetical",
-    )
-    return current_engine().optimize_compliance_intervention([hypothetical])
+    hypothetical = [
+        EvidenceNode(
+            node_id=f"HYP-{change.entity_name.strip().upper()}-{index}",
+            entity_name=change.entity_name.strip().lower(),
+            extracted_value=_coerce(change.extracted_value),
+            confidence=1.0,
+            source_doc="officer_hypothetical",
+        )
+        for index, change in enumerate(request.changes, start=1)
+    ]
+    return current_engine().optimize_compliance_intervention(hypothetical)
 
 
 def _coerce(raw: str) -> Any:
