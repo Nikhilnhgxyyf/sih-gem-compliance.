@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
@@ -448,6 +448,18 @@ async def officer_override(request: EvidenceCorrectionRequest):
 class CounterfactualChange(BaseModel):
     entity_name: str
     extracted_value: str
+
+    @field_validator("entity_name", "extracted_value")
+    @classmethod
+    def reject_blank_values(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class SimpleCounterfactualRequest(BaseModel):
+    changes: List[CounterfactualChange] = Field(min_length=1, max_length=20)
 
 
 class SimpleCounterfactualRequest(BaseModel):

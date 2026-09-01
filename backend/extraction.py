@@ -43,8 +43,11 @@ client: Optional[genai.Client] = None
 # Flash-Lite is deliberately used for this prototype: extraction is the only
 # generative step and the deterministic engine makes every final decision.
 # It has lower latency/cost and is less prone to presentation-breaking spikes.
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
-FALLBACK_MODEL_NAME = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+# Gemini now recommends this model for API keys where the older 2.5 Flash
+# family is unavailable. Both remain configurable in Render without a code
+# deployment.
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+FALLBACK_MODEL_NAME = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
 
 
 def _get_client() -> genai.Client:
