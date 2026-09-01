@@ -462,6 +462,10 @@ class SimpleCounterfactualRequest(BaseModel):
     changes: List[CounterfactualChange] = Field(min_length=1, max_length=20)
 
 
+class SimpleCounterfactualRequest(BaseModel):
+    changes: List[CounterfactualChange]
+
+
 @app.post("/api/v3/counterfactual")
 async def counterfactual(request: SimpleCounterfactualRequest):
     hypothetical = [
