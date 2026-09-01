@@ -1068,10 +1068,12 @@ COUNTERFACTUAL
 
 $("simulateButton").addEventListener("click", async () => {
 
-const entity = $("cfEntity").value.trim();
-const value = $("cfValue").value.trim();
+const changes = Array.from(document.querySelectorAll("#cfChanges .cf-change")).map(group => ({
+    entity_name: group.querySelector(".cf-entity").value.trim(),
+    extracted_value: group.querySelector(".cf-value").value.trim(),
+}));
 
-if (!entity || !value) {
+if (!changes.length || changes.some(change => !change.entity_name || !change.extracted_value)) {
 
     toast("Enter both entity and hypothetical value.");
 
@@ -1088,10 +1090,7 @@ try {
 
     const result = await api("/api/v3/counterfactual", {
         method: "POST",
-        body: JSON.stringify({
-            entity_name: entity,
-            extracted_value: value
-        })
+        body: JSON.stringify({ changes })
     });
 
     renderSimulation(result);
@@ -1102,6 +1101,19 @@ try {
 
 }
 
+});
+
+$("addCfChangeButton").addEventListener("click", () => {
+    const row = document.createElement("div");
+    row.className = "form-group cf-change";
+    row.innerHTML = `
+        <label>Entity</label>
+        <input class="cf-entity" type="text" placeholder="e.g. experience_years">
+        <label>Value</label>
+        <input class="cf-value" type="text" placeholder="e.g. 7">
+        <button class="text-button" type="button">Remove</button>`;
+    row.querySelector("button").addEventListener("click", () => row.remove());
+    $("cfChanges").appendChild(row);
 });
 
 function renderSimulation(result) {
@@ -1301,6 +1313,9 @@ function renderBidderReport(r) {
     const failuresHtml = (r.mandatory_failures || []).length
         ? r.mandatory_failures.map(id => `<span class="rule-chip">${escapeHtml(id)}</span>`).join(" ")
         : '<span class="empty-state">None</span>';
+    const ruleReportsHtml = (r.rule_reports || []).length
+        ? r.rule_reports.map(report => `<pre class="rule-report">${escapeHtml(report.text)}</pre>`).join("")
+        : '<span class="empty-state">No provenance-backed rule reports are available.</span>';
 
     $("bidderReport").innerHTML = `
         <div class="detail-row"><label>BIDDER</label><strong>${escapeHtml(r.bidder_label)}</strong></div>
@@ -1319,6 +1334,8 @@ function renderBidderReport(r) {
         <div class="detail-row"><label>MANDATORY FAILURES</label>${failuresHtml}</div>
         <div class="detail-row"><label>AUDIT ID</label><strong>${escapeHtml(r.audit_id)}</strong></div>
         <div class="detail-row"><label>LATEST LEDGER HASH</label><strong style="font-size:9px;">${escapeHtml(r.latest_hash || "—")}</strong></div>
+        <div class="detail-row"><label>RULE DECISION DETAILS</label></div>
+        <div class="rule-report-list">${ruleReportsHtml}</div>
     `;
 }
 

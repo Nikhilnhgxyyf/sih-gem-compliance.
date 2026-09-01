@@ -596,7 +596,7 @@
             <div>
                 <span class="eyebrow">DECISION SIMULATION</span>
                 <h2>Counterfactual Simulator</h2>
-                <p>See how the score would shift if one piece of evidence were different. This is only a preview — the real audit isn't touched.</p>
+                <p>Test one or more evidence changes together. This is only a preview — the real audit isn't touched.</p>
             </div>
 
             <div class="simulation-badge">
@@ -614,29 +614,34 @@
 
                 <h2>Simulate Intervention</h2>
 
-                <div class="form-group">
+                <div id="cfChanges">
+                <div class="form-group cf-change">
 
                     <label>Entity</label>
 
                     <input
-                        id="cfEntity"
+                        class="cf-entity"
                         type="text"
                         placeholder="e.g. turnover"
                     >
 
-                </div>
 
                 <div class="form-group">
 
                     <label>Value</label>
 
                     <input
-                        id="cfValue"
+                        class="cf-value"
                         type="text"
                         placeholder="e.g. 12.5"
                     >
 
                 </div>
+
+                </div>
+                </div>
+
+                <button id="addCfChangeButton" class="text-button" type="button">+ Add another change</button>
 
                 <button id="simulateButton" class="primary-button full">
                     Run Dry-Run Simulation
