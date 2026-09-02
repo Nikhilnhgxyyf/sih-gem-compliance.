@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
+    from demo_fixtures import try_fixture_extraction
 
 app = FastAPI(
     title="GeM AI Auditor V3",
@@ -132,9 +133,11 @@ async def ingest_documents(
     reused_tender = tender_payload is None and current_tender_rules is not None
 
     if tender_payload is not None:
-        extraction = extract_from_documents(bidder_payload, tender_payload)
+        extraction = try_fixture_extraction(bidder_payload, tender_payload) \
+            or extract_from_documents(bidder_payload, tender_payload)
     else:
-        extraction = extract_bidder_only(bidder_payload)
+        extraction = try_fixture_extraction(bidder_payload, None) \
+            or extract_bidder_only(bidder_payload)
 
     if "error" in extraction:
         raise HTTPException(status_code=502, detail=f"AI extraction failed: {extraction['error']}")
