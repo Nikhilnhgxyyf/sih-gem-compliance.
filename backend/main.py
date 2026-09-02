@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
-    from demo_fixtures import try_fixture_extraction
+from demo_fixtures import try_fixture_extraction
 
 app = FastAPI(
     title="GeM AI Auditor V3",
