@@ -97,7 +97,8 @@ class ExtractedDocument(BaseModel):
 
 class ExtractedRequirementNode(BaseModel):
     description: str = Field(description="plain-language statement of this requirement or sub-requirement")
-    op: Literal["AND", "OR", "NOT", ">=", ">", "<=", "<", "==", "!=", "EXISTS", "WITHIN_LAST_N_YEARS"]
+    op: Literal["AND", "OR", "NOT", ">=", ">", "<=", "<", "==", "!=", "EXISTS",
+                "WITHIN_LAST_N_YEARS", "DATE_BEFORE", "DATE_AFTER"]
     entity_name: Optional[str] = Field(default=None, description="required for leaf comparisons; omit for AND/OR/NOT")
     value: Optional[str] = Field(
         default=None,
@@ -159,8 +160,21 @@ project_value >= 50000000, WITHIN_LAST_N_YEARS with value "5") — so each sub-c
 checked and shown separately, not collapsed into one pass/fail. For a "completed within the last \
 N years" style condition, use op WITHIN_LAST_N_YEARS with entity_name set to the relevant \
 completion-date fact and value set to N as a plain number string — do not compute a cutoff date \
-yourself. If no tender document was provided, return an empty requirements list. If the tender \
-states a bid closing/submission date, extract it as tender_closing_date.
+yourself. For a requirement that a document stay valid until a FIXED calendar date (e.g. "bid \
+security valid until at least 29 December 2026"), use op DATE_AFTER with entity_name set to the \
+relevant fact and value set to that fixed date as YYYY-MM-DD — never use >= for a date, it is a \
+string, not a number, and will fail to compare. Use DATE_BEFORE the same way for an upper-bound \
+date requirement. WITHIN_LAST_N_YEARS is only for "must have happened in the last N years \
+relative to the tender closing date" — never for a fixed absolute date. For a requirement phrased \
+as a minimum COUNT of qualifying items (e.g. "at least 3 completed hospital projects of \u20b950 \
+Crore or more each, completed in the last 7 years"), do not just report how many projects are \
+listed — check each listed project against every stated per-project condition (value threshold, \
+date cutoff) yourself, and emit a single derived fact named "qualifying_project_count" whose value \
+is the count of projects that satisfy ALL of those per-project conditions. The requirement leaf \
+should then compare that derived count with op ">=" against the required number (e.g. {op: ">=", \
+entity_name: "qualifying_project_count", value: "3"}), not against the raw number of rows listed. \
+If no tender document was provided, return an empty requirements list. If the tender states a bid \
+closing/submission date, extract it as tender_closing_date.
 
 Be conservative: only report what is actually visible in the documents, and say so in a \
 document's notes field when it's unreadable or irrelevant, rather than guessing.
@@ -399,3 +413,4 @@ def build_engine_inputs(extraction: dict) -> tuple:
         ))
 
     return evidence_nodes, rule_nodes
+              
