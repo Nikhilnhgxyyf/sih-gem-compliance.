@@ -63,6 +63,18 @@ current_tender_filename: Optional[str] = None
 current_tender_department: Optional[str] = None
 
 
+def normalize_tender_department(value: Optional[str]) -> Optional[str]:
+    """Keep tender authority metadata concise and safe for display/audit logs."""
+    if not value:
+        return None
+    normalized = " ".join(value.split())
+    if not normalized:
+        return None
+    if len(normalized) > 200:
+        raise HTTPException(status_code=422, detail="Tender department must be 200 characters or fewer.")
+    return normalized
+
+
 def clear_audit_session() -> dict:
     """Remove every in-memory tender and bidder from the active audit session."""
     global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
@@ -75,20 +87,6 @@ def clear_audit_session() -> dict:
     current_tender_deadline = None
     current_tender_filename = None
     current_tender_department = None
-    return {"cleared_bidders": cleared_bidders}
-
-
-def clear_audit_session() -> dict:
-    """Remove every in-memory tender and bidder from the active audit session."""
-    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename
-
-    cleared_bidders = sum(1 for bidder_id in engines if bidder_id != "EMPTY")
-    engines.clear()
-    bidder_labels.clear()
-    active_bidder_id = None
-    current_tender_rules = None
-    current_tender_deadline = None
-    current_tender_filename = None
     return {"cleared_bidders": cleared_bidders}
 
 
@@ -197,10 +195,8 @@ async def ingest_documents(
         current_tender_rules = freshly_extracted_rules
         current_tender_deadline = deadline
         current_tender_filename = tender_payload["filename"]
-        current_tender_department = (
-            tender_department.strip()
-            if tender_department and tender_department.strip()
-            else extraction.get("tender_department")
+        current_tender_department = normalize_tender_department(
+            tender_department or extraction.get("tender_department")
         )
         rule_nodes = freshly_extracted_rules
     elif reused_tender:

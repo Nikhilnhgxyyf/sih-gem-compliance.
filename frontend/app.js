@@ -259,6 +259,8 @@ async function loadTenderStatus() {
 
         if (!info.tender_filename) {
             box.classList.add("hidden");
+            $("tenderContextBar").classList.add("hidden");
+            $("comparisonDepartment").classList.add("hidden");
             return;
         }
 
@@ -272,6 +274,9 @@ async function loadTenderStatus() {
         const comparisonDepartment = $("comparisonDepartment");
         comparisonDepartment.textContent = info.department ? `Tendering authority: ${info.department}` : "";
         comparisonDepartment.classList.toggle("hidden", !info.department);
+        $("contextTenderName").textContent = info.tender_filename;
+        $("contextDepartment").textContent = info.department || "Not identified — enter it when uploading the tender";
+        $("tenderContextBar").classList.remove("hidden");
         box.classList.remove("hidden");
 
     } catch (error) {
@@ -1528,8 +1533,10 @@ try {
      * GET /api/v3/evaluate
      */
 
-    const evaluation =
-        await api("/api/v3/evaluate");
+    const [evaluation, graph] = await Promise.all([
+        api("/api/v3/evaluate"),
+        api("/api/v3/state")
+    ]);
 
     // .overall has the score/decision/failure summary; .decisions is the
     // per-rule detail (used below for the Review Queue and node inspector).
@@ -1544,34 +1551,15 @@ try {
      * state through a state endpoint.
      */
 
-    try {
+    state.evidence = graph.evidence || [];
+    state.rules = graph.rules || [];
+    state.edges = graph.edges || [];
+    state.ledger = graph.ledger || [];
+    state.merkleRoot = graph.merkle_root || "";
+    state.ruleStatuses = graph.rule_statuses || {};
 
-        const graph =
-            await api("/api/v3/state");
-
-        state.evidence = graph.evidence || [];
-        state.rules = graph.rules || [];
-        state.edges = graph.edges || [];
-        state.ledger = graph.ledger || [];
-        state.merkleRoot = graph.merkle_root || "";
-        state.ruleStatuses = graph.rule_statuses || {};
-
-        if (graph.audit_id) {
-            state.auditId = graph.audit_id;
-        }
-
-        if (graph.tender_deadline) {
-            $("deadline").textContent =
-                formatDate(graph.tender_deadline);
-        }
-
-    } catch (graphError) {
-
-        console.warn(
-            "State endpoint not available yet.",
-            graphError
-        );
-    }
+    if (graph.audit_id) state.auditId = graph.audit_id;
+    if (graph.tender_deadline) $("deadline").textContent = formatDate(graph.tender_deadline);
 
     renderEverything();
 

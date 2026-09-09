@@ -217,6 +217,31 @@ align-items: center;
 margin-bottom: 30px;
 }
 
+.tender-context-bar {
+display: flex;
+align-items: center;
+gap: 10px;
+padding: 11px 14px;
+margin: -12px 0 22px;
+border: 1px solid #bfdbfe;
+border-left: 4px solid var(--blue);
+border-radius: 8px;
+background: #eff6ff;
+font-size: 11px;
+}
+
+.context-label {
+font-family: "JetBrains Mono", monospace;
+font-size: 9px;
+letter-spacing: .8px;
+color: #475569;
+}
+
+.context-divider {
+height: 18px;
+border-left: 1px solid #93c5fd;
+}
+
 .topbar h1 {
 margin: 5px 0 0;
 font-size: 26px;

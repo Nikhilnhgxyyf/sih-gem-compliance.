@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus
@@ -170,6 +171,16 @@ class EngineTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["department"], "Nashik Municipal Corporation")
+
+    def test_tender_department_is_normalized_and_limited(self):
+        import main
+
+        self.assertEqual(
+            main.normalize_tender_department("  Nashik   Municipal Corporation  "),
+            "Nashik Municipal Corporation",
+        )
+        with self.assertRaises(HTTPException):
+            main.normalize_tender_department("x" * 201)
 
 
 if __name__ == "__main__":
