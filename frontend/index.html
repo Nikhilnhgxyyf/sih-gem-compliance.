@@ -193,6 +193,11 @@
             <input id="bidderLabelInput" type="text" placeholder="e.g. ABC Technologies Pvt Ltd">
         </div>
 
+        <div class="form-group">
+            <label>PROCURING DEPARTMENT / AUTHORITY <small>(optional — GEMA also tries to extract this from the tender)</small></label>
+            <input id="tenderDepartmentInput" type="text" placeholder="e.g. Nashik Municipal Corporation">
+        </div>
+
         <div id="ingestError" class="ingest-error hidden"></div>
 
         <button id="ingestButton" class="primary-button full" disabled>
@@ -387,6 +392,7 @@
                 <span class="eyebrow">SIDE-BY-SIDE</span>
                 <h2>Bidder Comparison</h2>
                 <p>Every bidder ingested this session, ranked by compliance score. Click one to switch every other tab to that bidder.</p>
+                <p id="comparisonDepartment" class="department-context hidden"></p>
             </div>
 
         </div>

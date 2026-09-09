@@ -60,6 +60,22 @@ active_bidder_id: Optional[str] = None
 current_tender_rules: Optional[List[RuleNode]] = None
 current_tender_deadline: Optional[datetime] = None
 current_tender_filename: Optional[str] = None
+current_tender_department: Optional[str] = None
+
+
+def clear_audit_session() -> dict:
+    """Remove every in-memory tender and bidder from the active audit session."""
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
+
+    cleared_bidders = sum(1 for bidder_id in engines if bidder_id != "EMPTY")
+    engines.clear()
+    bidder_labels.clear()
+    active_bidder_id = None
+    current_tender_rules = None
+    current_tender_deadline = None
+    current_tender_filename = None
+    current_tender_department = None
+    return {"cleared_bidders": cleared_bidders}
 
 
 def clear_audit_session() -> dict:
@@ -122,8 +138,11 @@ async def ingest_documents(
     bidder_label: Optional[str] = Form(
         None, description="How this bidder should show up in the comparison table, e.g. the company name"
     ),
+    tender_department: Optional[str] = Form(
+        None, description="Optional procuring government department or authority; overrides extracted tender metadata."
+    ),
 ):
-    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
 
     bidder_payload = []
     for f in bidder_files:
@@ -178,6 +197,11 @@ async def ingest_documents(
         current_tender_rules = freshly_extracted_rules
         current_tender_deadline = deadline
         current_tender_filename = tender_payload["filename"]
+        current_tender_department = (
+            tender_department.strip()
+            if tender_department and tender_department.strip()
+            else extraction.get("tender_department")
+        )
         rule_nodes = freshly_extracted_rules
     elif reused_tender:
         # No tender this call, but one is already active — reuse its exact
@@ -214,6 +238,7 @@ async def ingest_documents(
             "bidder_files": [f["filename"] for f in bidder_payload],
             "tender_file": tender_payload["filename"] if tender_payload else (current_tender_filename if reused_tender else None),
             "tender_rules_reused": reused_tender,
+            "tender_department": current_tender_department,
             "evidence_count": len(evidence_nodes),
             "rule_count": len(rule_nodes),
             "document_hashes": document_hashes,
@@ -244,10 +269,11 @@ async def reset_tender():
     """Clears the cached tender ruleset. Call this before starting a
     genuinely different tender, so its requirements don't get silently
     reused for the next bidder uploaded."""
-    global current_tender_rules, current_tender_deadline, current_tender_filename
+    global current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
     current_tender_rules = None
     current_tender_deadline = None
     current_tender_filename = None
+    current_tender_department = None
     return {"message": "Tender ruleset cleared. Next upload with a tender_file will compile a fresh one."}
 
 
@@ -272,6 +298,7 @@ async def current_tender():
         "tender_filename": current_tender_filename,
         "rule_count": len(current_tender_rules) if current_tender_rules else 0,
         "deadline": current_tender_deadline.isoformat() if current_tender_deadline else None,
+        "department": current_tender_department,
     }
 
 

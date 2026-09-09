@@ -159,6 +159,18 @@ class EngineTestCase(unittest.TestCase):
         self.assertIsNone(main.current_tender_deadline)
         self.assertIsNone(main.current_tender_filename)
 
+    def test_current_tender_exposes_procuring_department(self):
+        import main
+
+        main.current_tender_filename = "hospital-tender.pdf"
+        main.current_tender_rules = []
+        main.current_tender_department = "Nashik Municipal Corporation"
+
+        response = TestClient(main.app).get("/api/v3/tender/current")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["department"], "Nashik Municipal Corporation")
+
 
 if __name__ == "__main__":
     unittest.main()

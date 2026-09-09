@@ -126,6 +126,9 @@ class ExtractionResult(BaseModel):
         description="Top-level eligibility requirements from the TENDER document. Empty list if no tender was provided."
     )
     tender_closing_date: Optional[str] = Field(default=None, description="YYYY-MM-DD if a tender doc was provided")
+    tender_department: Optional[str] = Field(
+        default=None, description="Government department, ministry, authority, or buyer named in the tender"
+    )
 
 
 SYSTEM_PROMPT = """You are an expert Indian Government Procurement Auditor extracting structured \
@@ -174,7 +177,8 @@ is the count of projects that satisfy ALL of those per-project conditions. The r
 should then compare that derived count with op ">=" against the required number (e.g. {op: ">=", \
 entity_name: "qualifying_project_count", value: "3"}), not against the raw number of rows listed. \
 If no tender document was provided, return an empty requirements list. If the tender states a bid \
-closing/submission date, extract it as tender_closing_date.
+closing/submission date, extract it as tender_closing_date. Also extract the buying government \
+department, ministry, authority, hospital, corporation, or other procuring entity as tender_department.
 
 Be conservative: only report what is actually visible in the documents, and say so in a \
 document's notes field when it's unreadable or irrelevant, rather than guessing.

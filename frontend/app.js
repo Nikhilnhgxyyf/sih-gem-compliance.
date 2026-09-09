@@ -206,6 +206,8 @@ $("ingestButton").addEventListener("click", async () => {
     if (ingestState.tenderFile) formData.append("tender_file", ingestState.tenderFile);
     const label = $("bidderLabelInput").value.trim();
     if (label) formData.append("bidder_label", label);
+    const department = $("tenderDepartmentInput").value.trim();
+    if (department) formData.append("tender_department", department);
 
     try {
 
@@ -230,6 +232,7 @@ $("ingestButton").addEventListener("click", async () => {
         ingestState = { tenderFile: null, bidderFiles: [] };
         renderIngestChips();
         $("bidderLabelInput").value = "";
+        $("tenderDepartmentInput").value = "";
 
         await loadBackendState();
         await loadBidderComparison();
@@ -263,8 +266,12 @@ async function loadTenderStatus() {
             Active tender: <strong>${escapeHtml(info.tender_filename)}</strong>
             (${info.rule_count} requirement(s) compiled) —
             new bidders reuse these automatically.
+            ${info.department ? `<br>Procuring department: <strong>${escapeHtml(info.department)}</strong>` : ""}
             <button class="text-button" onclick="resetTender()">Start a different tender</button>
         `;
+        const comparisonDepartment = $("comparisonDepartment");
+        comparisonDepartment.textContent = info.department ? `Tendering authority: ${info.department}` : "";
+        comparisonDepartment.classList.toggle("hidden", !info.department);
         box.classList.remove("hidden");
 
     } catch (error) {
@@ -304,6 +311,7 @@ async function resetAuditSession() {
 
         ingestState = { tenderFile: null, bidderFiles: [] };
         $("bidderLabelInput").value = "";
+        $("tenderDepartmentInput").value = "";
         $("ingestError").classList.add("hidden");
         $("ingestSummary").classList.add("hidden");
         renderIngestChips();
