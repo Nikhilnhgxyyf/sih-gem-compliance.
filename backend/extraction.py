@@ -30,7 +30,7 @@ import re
 import time
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
-from typing import List, Optional, Literal
+from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, field_validator
 from google import genai
@@ -324,7 +324,11 @@ def _convert_requirement_node(node: dict, tender_closing: Optional[datetime], co
     return ASTNode(op=op, field=canonical_entity_name(node.get("entity_name")), value=_coerce_value(node.get("value")))
 
 
-def build_engine_inputs(extraction: dict) -> tuple:
+def build_engine_inputs(
+    extraction: dict,
+    document_hashes: Optional[Dict[str, str]] = None,
+    extraction_timestamp: Optional[datetime] = None,
+) -> tuple:
     """
     Converts a raw ExtractionResult dict into (evidence_nodes, rule_nodes)
     for engine.register_evidence() / engine.register_rule().
@@ -340,6 +344,7 @@ def build_engine_inputs(extraction: dict) -> tuple:
         anything on its own.
     """
     evidence_nodes: List[EvidenceNode] = []
+    document_hashes = document_hashes or {}
     counter = 0
     pans, gstins, doc_names = [], [], []
 
@@ -357,9 +362,11 @@ def build_engine_inputs(extraction: dict) -> tuple:
                 extracted_value=value,
                 confidence=fact.get("confidence", 0.8),
                 source_doc=doc["filename"],
+                document_hash=document_hashes.get(doc["filename"]),
                 page_number=fact.get("page"),
                 source_quote=fact.get("source_quote"),
                 valid_until=_parse_iso_date(fact.get("valid_until")),
+                extraction_timestamp=extraction_timestamp,
             ))
 
             if entity == "pan" and isinstance(value, str) and PAN_RE.match(value.upper()):
@@ -410,6 +417,8 @@ def build_engine_inputs(extraction: dict) -> tuple:
             ast=ast,
             weight=req.get("weight", 10.0),
             is_mandatory=req.get("mandatory", True),
+            version=str(req.get("version", "1.0")),
+            effective_from=_parse_iso_date(req.get("effective_from")),
         ))
 
     return evidence_nodes, rule_nodes

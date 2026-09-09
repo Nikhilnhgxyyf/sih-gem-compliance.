@@ -73,7 +73,7 @@ class EngineTestCase(unittest.TestCase):
             ast=ASTNode(op="RULE_REF", field="R001"),
         ))
         engine.rebuild_dependencies()
-        result = engine.incremental_recalculate("E001", 130, "Officer")
+        result = engine.incremental_recalculate("E001", 130, "Officer", "Verified against the original financial statement")
         self.assertEqual(result["affected_rules"], ["R001", "R002"])
         self.assertEqual(result["new_decision"], "PASS")
         self.assertEqual(engine.current_rule_states["R001"], RuleStatus.PASS)
@@ -86,6 +86,16 @@ class EngineTestCase(unittest.TestCase):
         valid, message = engine.verify_chain_integrity()
         self.assertFalse(valid)
         self.assertIn("Tampering detected", message)
+
+    def test_merkle_root_and_replay_protection_detect_tampering(self):
+        engine = self.make_engine()
+        root = engine.merkle_root()
+        engine._append_to_ledger("TEST", "SYSTEM", {"step": 1})
+        self.assertNotEqual(root, engine.merkle_root())
+        engine.ledger[1].nonce = engine.ledger[0].nonce
+        valid, message = engine.verify_chain_integrity()
+        self.assertFalse(valid)
+        self.assertIn("Replay nonce", message)
 
     def test_api_officer_override_and_multi_change_counterfactual(self):
         # Import here so engine-only tests stay independent from FastAPI state.
@@ -108,6 +118,7 @@ class EngineTestCase(unittest.TestCase):
         self.assertEqual(client.post("/api/v3/ingest", json=payload).status_code, 200)
         corrected = client.post("/api/v3/officer-override", json={
             "node_id": "E001", "new_value": 130, "actor": "Officer",
+            "reason": "Verified against the original financial statement",
         })
         self.assertEqual(corrected.status_code, 200)
         self.assertEqual(corrected.json()["impact_analysis"]["new_decision"], "PASS")

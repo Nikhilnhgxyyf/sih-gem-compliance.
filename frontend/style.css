@@ -1490,3 +1490,22 @@ background: #f8fafc;
 font: 10px/1.5 "JetBrains Mono", monospace;
 color: #334155;
 }
+
+.ledger-root {
+display: flex;
+justify-content: space-between;
+gap: 12px;
+align-items: center;
+padding: 11px 12px;
+margin-bottom: 10px;
+border: 1px solid #bbf7d0;
+border-radius: 8px;
+background: #f0fdf4;
+font-size: 10px;
+}
+
+.ledger-root .hash {
+max-width: 75%;
+overflow: hidden;
+text-overflow: ellipsis;
+}

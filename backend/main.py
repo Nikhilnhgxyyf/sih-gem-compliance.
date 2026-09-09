@@ -1,4 +1,5 @@
 import os
+import hashlib
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
@@ -156,7 +157,14 @@ async def ingest_documents(
     if "error" in extraction:
         raise HTTPException(status_code=502, detail=f"AI extraction failed: {extraction['error']}")
 
-    evidence_nodes, freshly_extracted_rules = build_engine_inputs(extraction)
+    document_hashes = {
+        document["filename"]: hashlib.sha256(document["data"]).hexdigest()
+        for document in bidder_payload + ([tender_payload] if tender_payload else [])
+    }
+    extraction_timestamp = datetime.now(timezone.utc)
+    evidence_nodes, freshly_extracted_rules = build_engine_inputs(
+        extraction, document_hashes=document_hashes, extraction_timestamp=extraction_timestamp
+    )
 
     if tender_payload is not None:
         # A tender was supplied this call — (re)compile and store its ruleset.
@@ -199,7 +207,7 @@ async def ingest_documents(
     new_engine.rebuild_dependencies()
     evaluations = new_engine.evaluate_all_rules()
 
-    new_engine._append_to_ledger(
+    ingestion_event = new_engine._append_to_ledger(
         action="DOCUMENT_INGESTION",
         actor="AI_EXTRACTION",
         payload={
@@ -208,8 +216,11 @@ async def ingest_documents(
             "tender_rules_reused": reused_tender,
             "evidence_count": len(evidence_nodes),
             "rule_count": len(rule_nodes),
+            "document_hashes": document_hashes,
         },
     )
+    for node in new_engine.evidence_nodes.values():
+        node.originating_event = ingestion_event
 
     engines[bidder_id] = new_engine
     bidder_labels[bidder_id] = label
@@ -463,6 +474,7 @@ async def officer_override(request: EvidenceCorrectionRequest):
             changed_node_id=request.node_id,
             new_value=request.new_value,
             actor=request.actor,
+            reason=request.reason,
         )
         return {
             "message": "Evidence correction propagated.",
@@ -533,6 +545,7 @@ async def audit_chain():
         "message": message,
         "ledger_length": len(engine.ledger),
         "ledger": [e.model_dump(mode="json") for e in engine.ledger],
+        "merkle_root": engine.merkle_root(),
     }
 
 
@@ -563,4 +576,5 @@ async def get_engine_state():
         "edges": [e.model_dump(mode="json") for e in engine.edges],
         "rule_statuses": rule_statuses,
         "ledger": [e.model_dump(mode="json") for e in engine.ledger],
+        "merkle_root": engine.merkle_root(),
     }

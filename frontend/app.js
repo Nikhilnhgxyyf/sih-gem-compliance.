@@ -607,6 +607,11 @@ $("nodeDetailsContent").innerHTML = `
     </div>
 
     <div class="detail-row">
+        <label>DOCUMENT SHA-256</label>
+        <strong class="hash">${escapeHtml(node.document_hash || "System-generated evidence")}</strong>
+    </div>
+
+    <div class="detail-row">
         <label>VALID UNTIL</label>
         <strong>${node.valid_until || "No expiry specified"}</strong>
     </div>
@@ -632,6 +637,11 @@ $("nodeDetailsContent").innerHTML = `
             type="text"
             placeholder="Corrected value"
         >
+    </div>
+
+    <div class="form-group">
+        <label>VERIFICATION REASON <small>(required for the audit ledger)</small></label>
+        <input id="overrideReason-${escapeJs(node.node_id)}" type="text" placeholder="e.g. Verified against original audited statement">
     </div>
 
     <button
@@ -660,13 +670,23 @@ function actorName() {
         || "Procurement Officer";
 }
 
+function overrideReason(nodeId) {
+    return document.getElementById(`overrideReason-${nodeId}`)?.value.trim() || "";
+}
+
 window.submitOverride = async function (nodeId) {
 
     const input = document.getElementById(`overrideValue-${nodeId}`);
     const raw = input.value.trim();
+    const reason = overrideReason(nodeId);
 
     if (!raw) {
         toast("Enter a corrected value first.");
+        return;
+    }
+
+    if (reason.length < 3) {
+        toast("Provide an officer verification reason (at least 3 characters).");
         return;
     }
 
@@ -681,7 +701,8 @@ window.submitOverride = async function (nodeId) {
             body: JSON.stringify({
                 node_id: nodeId,
                 new_value: coerceValue(raw),
-                actor: actorName()
+                actor: actorName(),
+                reason
             })
         });
 
@@ -847,6 +868,7 @@ window.jumpToReviewItem = function (ruleId) {
             <strong>${escapeHtml(n.source_doc)}</strong>
             <span>${escapeHtml(n.entity_name)} = ${escapeHtml(String(n.extracted_value))}</span>
             <small>${escapeHtml(n.node_id)} · confidence ${Number(n.confidence || 0).toFixed(2)}</small>
+            <small class="hash">SHA-256: ${escapeHtml(n.document_hash || "not applicable")}</small>
         </div>
     `).join("");
 
@@ -862,6 +884,10 @@ window.jumpToReviewItem = function (ruleId) {
             <label>CONFIRMED VALUE — applies to all ${nodes.length} sources above</label>
             <input id="resolveInput-${escapeJs(ruleId)}" type="text" placeholder="e.g. 11.2">
         </div>
+        <div class="form-group">
+            <label>OFFICER VERIFICATION REASON <small>(required)</small></label>
+            <input id="resolveReason-${escapeJs(ruleId)}" type="text" placeholder="e.g. Confirmed against original audited statement">
+        </div>
 
         <button class="primary-button full" onclick="resolveConflict('${escapeJs(ruleId)}')">
             Confirm &amp; Recalculate
@@ -875,9 +901,15 @@ window.resolveConflict = async function (ruleId) {
     const evidenceIds = evaluation?.evidence_ids || [];
     const input = document.getElementById(`resolveInput-${ruleId}`);
     const raw = input.value.trim();
+    const reason = document.getElementById(`resolveReason-${ruleId}`)?.value.trim() || "";
 
     if (!raw) {
         toast("Enter the confirmed value first.");
+        return;
+    }
+
+    if (reason.length < 3) {
+        toast("Provide an officer verification reason (at least 3 characters).");
         return;
     }
 
@@ -891,7 +923,7 @@ window.resolveConflict = async function (ruleId) {
         for (const nodeId of evidenceIds) {
             const result = await api("/api/v3/officer-override", {
                 method: "POST",
-                body: JSON.stringify({ node_id: nodeId, new_value: value, actor: actorName() })
+                body: JSON.stringify({ node_id: nodeId, new_value: value, actor: actorName(), reason })
             });
             lastImpact = result.impact_analysis;
         }
@@ -1237,6 +1269,9 @@ LEDGER
 function renderLedger() {
 
 const container = $("ledgerContainer");
+const chainStatus = $("chainStatus");
+chainStatus.textContent = state.merkleRoot ? `MERKLE ROOT: ${state.merkleRoot.slice(0, 12)}…` : "CHAIN READY";
+chainStatus.className = "chain-status valid";
 
 if (!state.ledger.length) {
 
@@ -1248,7 +1283,9 @@ if (!state.ledger.length) {
     return;
 }
 
-container.innerHTML = state.ledger.map(event => `
+container.innerHTML = `
+    <div class="ledger-root"><strong>MERKLE ROOT</strong><span class="hash">${escapeHtml(state.merkleRoot || "Pending")}</span></div>
+` + state.ledger.map(event => `
 
     <div class="ledger-event">
 
@@ -1467,6 +1504,7 @@ try {
         state.rules = graph.rules || [];
         state.edges = graph.edges || [];
         state.ledger = graph.ledger || [];
+        state.merkleRoot = graph.merkle_root || "";
         state.ruleStatuses = graph.rule_statuses || {};
 
         if (graph.audit_id) {
