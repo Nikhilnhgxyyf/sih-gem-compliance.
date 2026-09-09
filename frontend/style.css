@@ -262,6 +262,26 @@ border-radius: 8px;
 color: var(--muted);
 }
 
+.reset-button {
+border: 1px solid #fecaca;
+background: #fff;
+color: #b91c1c;
+padding: 9px 12px;
+border-radius: 8px;
+font-size: 10px;
+font-weight: 700;
+}
+
+.reset-button:hover:not(:disabled) {
+background: #fef2f2;
+border-color: #f87171;
+}
+
+.reset-button:disabled {
+cursor: wait;
+opacity: .6;
+}
+
 /* SECTIONS */
 
 .page-section {

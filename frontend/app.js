@@ -287,6 +287,55 @@ window.resetTender = async function () {
     }
 };
 
+async function resetAuditSession() {
+
+    const confirmed = window.confirm(
+        "Reset this audit? This clears the active tender, every bidder, and all audit data for everyone using this deployment."
+    );
+
+    if (!confirmed) return;
+
+    const button = $("resetSessionButton");
+    button.disabled = true;
+
+    try {
+
+        const result = await api("/api/v3/session/reset", { method: "POST" });
+
+        ingestState = { tenderFile: null, bidderFiles: [] };
+        $("bidderLabelInput").value = "";
+        $("ingestError").classList.add("hidden");
+        $("ingestSummary").classList.add("hidden");
+        renderIngestChips();
+
+        if (evidenceNetwork) {
+            evidenceNetwork.destroy();
+            evidenceNetwork = null;
+        }
+
+        state = {
+            evaluation: null,
+            evidence: [],
+            rules: [],
+            edges: [],
+            ledger: [],
+            auditId: "GEMA-SIH-001"
+        };
+
+        await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
+        document.querySelector('[data-section="ingest"]').click();
+        toast(`Audit reset — ${result.cleared_bidders} bidder(s) cleared. Start with a tender and bidder packet.`);
+
+    } catch (error) {
+
+        toast(`Could not reset audit: ${error.message}`);
+
+    } finally {
+
+        button.disabled = false;
+    }
+}
+
 /* =========================================================
 OVERVIEW
 ========================================================= */
@@ -1572,6 +1621,8 @@ $("refreshButton").addEventListener(
 "click",
 loadBackendState
 );
+
+$("resetSessionButton").addEventListener("click", resetAuditSession);
 
 /* =========================================================
 UTILITIES

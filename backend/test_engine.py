@@ -118,6 +118,30 @@ class EngineTestCase(unittest.TestCase):
         self.assertEqual(simulation.status_code, 200)
         self.assertEqual(simulation.json()["status"], "ALREADY_COMPLIANT")
 
+    def test_api_session_reset_clears_bidders_and_tender(self):
+        import main
+
+        main.engines.clear()
+        main.bidder_labels.clear()
+        main.active_bidder_id = None
+        main.current_tender_rules = []
+        main.current_tender_deadline = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        main.current_tender_filename = "previous-tender.pdf"
+        main.engines["BIDDER-1"] = self.make_engine()
+        main.bidder_labels["BIDDER-1"] = "Previous bidder"
+        main.active_bidder_id = "BIDDER-1"
+
+        response = TestClient(main.app).post("/api/v3/session/reset")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["cleared_bidders"], 1)
+        self.assertEqual(main.engines, {})
+        self.assertEqual(main.bidder_labels, {})
+        self.assertIsNone(main.active_bidder_id)
+        self.assertIsNone(main.current_tender_rules)
+        self.assertIsNone(main.current_tender_deadline)
+        self.assertIsNone(main.current_tender_filename)
+
 
 if __name__ == "__main__":
     unittest.main()
