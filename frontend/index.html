@@ -121,6 +121,10 @@
                 ↻
             </button>
 
+            <button class="reset-button" id="resetSessionButton" type="button" title="Clear the tender, all bidders, and audit data">
+                Reset Audit
+            </button>
+
         </div>
 
     </header>
@@ -276,6 +280,20 @@
 
             </div>
 
+        </div>
+
+
+        <div class="panel score-explanation-panel">
+            <div class="panel-header">
+                <div>
+                    <span class="eyebrow">EXPLAINABLE SCORING</span>
+                    <h2>Why this score?</h2>
+                </div>
+                <span id="passedRuleSummary" class="architecture-badge">0 passed</span>
+            </div>
+            <div id="scoreExplanation" class="score-explanation">
+                <div class="empty-state">Rule contributions will appear after evaluation.</div>
+            </div>
         </div>
 
 
