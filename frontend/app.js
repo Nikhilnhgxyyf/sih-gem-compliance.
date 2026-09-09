@@ -206,6 +206,8 @@ $("ingestButton").addEventListener("click", async () => {
     if (ingestState.tenderFile) formData.append("tender_file", ingestState.tenderFile);
     const label = $("bidderLabelInput").value.trim();
     if (label) formData.append("bidder_label", label);
+    const department = $("tenderDepartmentInput").value.trim();
+    if (department) formData.append("tender_department", department);
 
     try {
 
@@ -230,6 +232,7 @@ $("ingestButton").addEventListener("click", async () => {
         ingestState = { tenderFile: null, bidderFiles: [] };
         renderIngestChips();
         $("bidderLabelInput").value = "";
+        $("tenderDepartmentInput").value = "";
 
         await loadBackendState();
         await loadBidderComparison();
@@ -263,8 +266,12 @@ async function loadTenderStatus() {
             Active tender: <strong>${escapeHtml(info.tender_filename)}</strong>
             (${info.rule_count} requirement(s) compiled) —
             new bidders reuse these automatically.
+            ${info.department ? `<br>Procuring department: <strong>${escapeHtml(info.department)}</strong>` : ""}
             <button class="text-button" onclick="resetTender()">Start a different tender</button>
         `;
+        const comparisonDepartment = $("comparisonDepartment");
+        comparisonDepartment.textContent = info.department ? `Tendering authority: ${info.department}` : "";
+        comparisonDepartment.classList.toggle("hidden", !info.department);
         box.classList.remove("hidden");
 
     } catch (error) {
@@ -286,6 +293,56 @@ window.resetTender = async function () {
         toast(`Could not reset tender: ${error.message}`);
     }
 };
+
+async function resetAuditSession() {
+
+    const confirmed = window.confirm(
+        "Reset this audit? This clears the active tender, every bidder, and all audit data for everyone using this deployment."
+    );
+
+    if (!confirmed) return;
+
+    const button = $("resetSessionButton");
+    button.disabled = true;
+
+    try {
+
+        const result = await api("/api/v3/session/reset", { method: "POST" });
+
+        ingestState = { tenderFile: null, bidderFiles: [] };
+        $("bidderLabelInput").value = "";
+        $("tenderDepartmentInput").value = "";
+        $("ingestError").classList.add("hidden");
+        $("ingestSummary").classList.add("hidden");
+        renderIngestChips();
+
+        if (evidenceNetwork) {
+            evidenceNetwork.destroy();
+            evidenceNetwork = null;
+        }
+
+        state = {
+            evaluation: null,
+            evidence: [],
+            rules: [],
+            edges: [],
+            ledger: [],
+            auditId: "GEMA-SIH-001"
+        };
+
+        await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
+        document.querySelector('[data-section="ingest"]').click();
+        toast(`Audit reset — ${result.cleared_bidders} bidder(s) cleared. Start with a tender and bidder packet.`);
+
+    } catch (error) {
+
+        toast(`Could not reset audit: ${error.message}`);
+
+    } finally {
+
+        button.disabled = false;
+    }
+}
 
 /* =========================================================
 OVERVIEW
@@ -351,6 +408,8 @@ $("complianceScore")
     .style.background =
     `conic-gradient(#2563eb ${degrees}deg, #e2e8f0 ${degrees}deg)`;
 
+renderScoreExplanation();
+
 
 /* Mandatory failures */
 
@@ -372,6 +431,32 @@ if (!failures.length) {
                 <span>Mandatory procurement rule failed.</span>
             </div>
         `).join("");
+}
+
+function renderScoreExplanation() {
+
+    const rules = state.rules || [];
+    const totalWeight = rules.reduce((sum, rule) => sum + Number(rule.weight || 0), 0);
+    const passed = rules.filter(rule => state.ruleStatuses?.[rule.rule_id] === "PASS").length;
+    $("passedRuleSummary").textContent = `${passed}/${rules.length} passed`;
+
+    if (!rules.length || !totalWeight) {
+        $("scoreExplanation").innerHTML = '<div class="empty-state">No evaluated rules available.</div>';
+        return;
+    }
+
+    $("scoreExplanation").innerHTML = rules.map(rule => {
+        const status = state.ruleStatuses?.[rule.rule_id] || "REVIEW";
+        const contribution = status === "PASS" ? Number(rule.weight || 0) / totalWeight * 100 : 0;
+        return `
+            <div class="score-rule-row">
+                <strong>${escapeHtml(rule.rule_id)}</strong>
+                <span class="status-pill ${status}">${escapeHtml(status)}</span>
+                <span>${contribution.toFixed(1)} points</span>
+                <small>${escapeHtml(rule.clause_text)}</small>
+            </div>
+        `;
+    }).join("");
 }
 
 
@@ -558,6 +643,11 @@ $("nodeDetailsContent").innerHTML = `
     </div>
 
     <div class="detail-row">
+        <label>DOCUMENT SHA-256</label>
+        <strong class="hash">${escapeHtml(node.document_hash || "System-generated evidence")}</strong>
+    </div>
+
+    <div class="detail-row">
         <label>VALID UNTIL</label>
         <strong>${node.valid_until || "No expiry specified"}</strong>
     </div>
@@ -583,6 +673,11 @@ $("nodeDetailsContent").innerHTML = `
             type="text"
             placeholder="Corrected value"
         >
+    </div>
+
+    <div class="form-group">
+        <label>VERIFICATION REASON <small>(required for the audit ledger)</small></label>
+        <input id="overrideReason-${escapeJs(node.node_id)}" type="text" placeholder="e.g. Verified against original audited statement">
     </div>
 
     <button
@@ -611,13 +706,23 @@ function actorName() {
         || "Procurement Officer";
 }
 
+function overrideReason(nodeId) {
+    return document.getElementById(`overrideReason-${nodeId}`)?.value.trim() || "";
+}
+
 window.submitOverride = async function (nodeId) {
 
     const input = document.getElementById(`overrideValue-${nodeId}`);
     const raw = input.value.trim();
+    const reason = overrideReason(nodeId);
 
     if (!raw) {
         toast("Enter a corrected value first.");
+        return;
+    }
+
+    if (reason.length < 3) {
+        toast("Provide an officer verification reason (at least 3 characters).");
         return;
     }
 
@@ -632,7 +737,8 @@ window.submitOverride = async function (nodeId) {
             body: JSON.stringify({
                 node_id: nodeId,
                 new_value: coerceValue(raw),
-                actor: actorName()
+                actor: actorName(),
+                reason
             })
         });
 
@@ -798,6 +904,7 @@ window.jumpToReviewItem = function (ruleId) {
             <strong>${escapeHtml(n.source_doc)}</strong>
             <span>${escapeHtml(n.entity_name)} = ${escapeHtml(String(n.extracted_value))}</span>
             <small>${escapeHtml(n.node_id)} · confidence ${Number(n.confidence || 0).toFixed(2)}</small>
+            <small class="hash">SHA-256: ${escapeHtml(n.document_hash || "not applicable")}</small>
         </div>
     `).join("");
 
@@ -813,6 +920,10 @@ window.jumpToReviewItem = function (ruleId) {
             <label>CONFIRMED VALUE — applies to all ${nodes.length} sources above</label>
             <input id="resolveInput-${escapeJs(ruleId)}" type="text" placeholder="e.g. 11.2">
         </div>
+        <div class="form-group">
+            <label>OFFICER VERIFICATION REASON <small>(required)</small></label>
+            <input id="resolveReason-${escapeJs(ruleId)}" type="text" placeholder="e.g. Confirmed against original audited statement">
+        </div>
 
         <button class="primary-button full" onclick="resolveConflict('${escapeJs(ruleId)}')">
             Confirm &amp; Recalculate
@@ -826,9 +937,15 @@ window.resolveConflict = async function (ruleId) {
     const evidenceIds = evaluation?.evidence_ids || [];
     const input = document.getElementById(`resolveInput-${ruleId}`);
     const raw = input.value.trim();
+    const reason = document.getElementById(`resolveReason-${ruleId}`)?.value.trim() || "";
 
     if (!raw) {
         toast("Enter the confirmed value first.");
+        return;
+    }
+
+    if (reason.length < 3) {
+        toast("Provide an officer verification reason (at least 3 characters).");
         return;
     }
 
@@ -842,7 +959,7 @@ window.resolveConflict = async function (ruleId) {
         for (const nodeId of evidenceIds) {
             const result = await api("/api/v3/officer-override", {
                 method: "POST",
-                body: JSON.stringify({ node_id: nodeId, new_value: value, actor: actorName() })
+                body: JSON.stringify({ node_id: nodeId, new_value: value, actor: actorName(), reason })
             });
             lastImpact = result.impact_analysis;
         }
@@ -1003,7 +1120,9 @@ try {
                 ? "MODERATE"
                 : affected.length
                     ? "LOW"
-                    : "NONE"
+                    : "NONE",
+        propagation_edges: affected.map(rule => ({ from: nodeId, to: rule })),
+        score_at_risk: 0
     });
 
 }
@@ -1013,6 +1132,7 @@ try {
 function renderBlastResult(result) {
 
 const rules = result.affected_rules || [];
+const edges = result.propagation_edges || [];
 
 $("blastResult").innerHTML = `
 
@@ -1037,6 +1157,16 @@ $("blastResult").innerHTML = `
         <strong>
             ${result.mandatory_rules_affected || 0}
         </strong>
+    </div>
+
+    <div class="detail-row">
+        <label>SCORE AT RISK IF INVALIDATED</label>
+        <strong>−${Number(result.score_at_risk || 0).toFixed(2)} points</strong>
+    </div>
+
+    <div class="blast-flow">
+        <strong>${escapeHtml(result.target_node || "Evidence")}</strong>
+        ${edges.length ? edges.map(edge => `<span>↳ ${escapeHtml(edge.from)} → <strong>${escapeHtml(edge.to)}</strong></span>`).join("") : '<span>No downstream dependency path.</span>'}
     </div>
 
     <div class="detail-row">
@@ -1188,6 +1318,9 @@ LEDGER
 function renderLedger() {
 
 const container = $("ledgerContainer");
+const chainStatus = $("chainStatus");
+chainStatus.textContent = state.merkleRoot ? `MERKLE ROOT: ${state.merkleRoot.slice(0, 12)}…` : "CHAIN READY";
+chainStatus.className = "chain-status valid";
 
 if (!state.ledger.length) {
 
@@ -1199,7 +1332,9 @@ if (!state.ledger.length) {
     return;
 }
 
-container.innerHTML = state.ledger.map(event => `
+container.innerHTML = `
+    <div class="ledger-root"><strong>MERKLE ROOT</strong><span class="hash">${escapeHtml(state.merkleRoot || "Pending")}</span></div>
+` + state.ledger.map(event => `
 
     <div class="ledger-event">
 
@@ -1418,6 +1553,7 @@ try {
         state.rules = graph.rules || [];
         state.edges = graph.edges || [];
         state.ledger = graph.ledger || [];
+        state.merkleRoot = graph.merkle_root || "";
         state.ruleStatuses = graph.rule_statuses || {};
 
         if (graph.audit_id) {
@@ -1572,6 +1708,8 @@ $("refreshButton").addEventListener(
 "click",
 loadBackendState
 );
+
+$("resetSessionButton").addEventListener("click", resetAuditSession);
 
 /* =========================================================
 UTILITIES

@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import secrets
 from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Tuple, Any, Optional
@@ -235,6 +236,7 @@ class ProcurementIntelligenceEngine:
             "payload": payload,
             "impact": impact or {},
             "previous_hash": previous_hash,
+            "nonce": secrets.token_hex(16),
         }
 
         event_hash = self._canonical_hash(
@@ -256,7 +258,15 @@ class ProcurementIntelligenceEngine:
 
         previous_hash = "0000000000000000"
 
-        for event in self.ledger:
+        nonces: Set[str] = set()
+        for index, event in enumerate(self.ledger):
+
+            if event.event_id != f"EVT-{index:04d}":
+                return False, f"Invalid event sequence at {event.event_id}"
+
+            if event.nonce in nonces:
+                return False, f"Replay nonce detected at {event.event_id}"
+            nonces.add(event.nonce)
 
             if event.previous_hash != previous_hash:
                 return (
@@ -272,6 +282,7 @@ class ProcurementIntelligenceEngine:
                 "payload": event.payload,
                 "impact": event.impact,
                 "previous_hash": event.previous_hash,
+                "nonce": event.nonce,
             }
 
             calculated_hash = self._canonical_hash(
@@ -287,6 +298,18 @@ class ProcurementIntelligenceEngine:
             previous_hash = event.event_hash
 
         return True, "Chain Verified"
+
+    def merkle_root(self) -> str:
+        """Return a deterministic Merkle root over the current ledger hashes."""
+        if not self.ledger:
+            return hashlib.sha256(b"").hexdigest()
+        level = [event.event_hash for event in self.ledger]
+        while len(level) > 1:
+            if len(level) % 2:
+                level.append(level[-1])
+            level = [self._canonical_hash({"left": left, "right": right})
+                     for left, right in zip(level[::2], level[1::2])]
+        return level[0]
 
     # ========================================================
     # REGISTRATION
@@ -1177,6 +1200,7 @@ class ProcurementIntelligenceEngine:
     ) -> dict:
 
         affected_rules: Set[str] = set()
+        propagation_edges: List[dict] = []
 
         queue = deque(
             [target_node_id]
@@ -1198,6 +1222,8 @@ class ProcurementIntelligenceEngine:
                 set(),
             ):
 
+                propagation_edges.append({"from": current, "to": dependent})
+
                 if dependent in self.rule_nodes:
 
                     affected_rules.add(
@@ -1214,6 +1240,13 @@ class ProcurementIntelligenceEngine:
             if self.rule_nodes[
                 rule_id
             ].is_mandatory
+        )
+
+        total_weight = sum(rule.weight for rule in self.rule_nodes.values())
+        score_at_risk = sum(
+            self.rule_nodes[rule_id].weight / total_weight * 100
+            for rule_id in affected_rules
+            if total_weight and self.current_rule_states.get(rule_id) == RuleStatus.PASS
         )
 
         if mandatory_count > 0:
@@ -1243,6 +1276,8 @@ class ProcurementIntelligenceEngine:
             "affected_rules": sorted(
                 affected_rules
             ),
+            "propagation_edges": propagation_edges,
+            "score_at_risk": round(score_at_risk, 2),
             "decision_sensitivity": sensitivity,
         }
 
@@ -1255,6 +1290,7 @@ class ProcurementIntelligenceEngine:
         changed_node_id: str,
         new_value: Any,
         actor: str,
+        reason: str,
     ) -> dict:
 
         if changed_node_id not in self.evidence_nodes:
@@ -1275,6 +1311,7 @@ class ProcurementIntelligenceEngine:
         ]
 
         old_value = node.extracted_value
+        old_status = node.status
 
         # ----------------------------------------------------
         # Mutate evidence
@@ -1285,6 +1322,8 @@ class ProcurementIntelligenceEngine:
         node.status = (
             EvidenceStatus.OFFICER_CONFIRMED
         )
+        node.verified_by = actor
+        node.verified_at = datetime.now(timezone.utc)
 
         # ----------------------------------------------------
         # Find affected subgraph
@@ -1358,6 +1397,9 @@ class ProcurementIntelligenceEngine:
                 "node": changed_node_id,
                 "old_value": old_value,
                 "new_value": new_value,
+                "reason": reason,
+                "old_status": old_status,
+                "new_status": node.status,
             },
             impact=impact,
         )
