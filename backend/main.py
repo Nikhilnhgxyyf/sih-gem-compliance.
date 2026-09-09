@@ -78,6 +78,20 @@ def clear_audit_session() -> dict:
     return {"cleared_bidders": cleared_bidders}
 
 
+def clear_audit_session() -> dict:
+    """Remove every in-memory tender and bidder from the active audit session."""
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename
+
+    cleared_bidders = sum(1 for bidder_id in engines if bidder_id != "EMPTY")
+    engines.clear()
+    bidder_labels.clear()
+    active_bidder_id = None
+    current_tender_rules = None
+    current_tender_deadline = None
+    current_tender_filename = None
+    return {"cleared_bidders": cleared_bidders}
+
+
 def current_engine() -> ProcurementIntelligenceEngine:
     global active_bidder_id
     if active_bidder_id is None or active_bidder_id not in engines:
