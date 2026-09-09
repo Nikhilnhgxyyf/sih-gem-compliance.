@@ -121,9 +121,21 @@
                 ↻
             </button>
 
+            <button class="reset-button" id="resetSessionButton" type="button" title="Clear the tender, all bidders, and audit data">
+                Reset Audit
+            </button>
+
         </div>
 
     </header>
+
+    <div id="tenderContextBar" class="tender-context-bar hidden" role="status">
+        <span class="context-label">ACTIVE TENDER</span>
+        <strong id="contextTenderName">No tender selected</strong>
+        <span class="context-divider"></span>
+        <span class="context-label">PROCURING AUTHORITY</span>
+        <strong id="contextDepartment">Not identified</strong>
+    </div>
 
 
     <!-- GLOBAL LOADING -->
@@ -187,6 +199,11 @@
         <div class="form-group">
             <label>BIDDER LABEL <small>(optional — shows up in the comparison table)</small></label>
             <input id="bidderLabelInput" type="text" placeholder="e.g. ABC Technologies Pvt Ltd">
+        </div>
+
+        <div class="form-group">
+            <label>PROCURING DEPARTMENT / AUTHORITY <small>(optional — GEMA also tries to extract this from the tender)</small></label>
+            <input id="tenderDepartmentInput" type="text" placeholder="e.g. Nashik Municipal Corporation">
         </div>
 
         <div id="ingestError" class="ingest-error hidden"></div>
@@ -276,6 +293,20 @@
 
             </div>
 
+        </div>
+
+
+        <div class="panel score-explanation-panel">
+            <div class="panel-header">
+                <div>
+                    <span class="eyebrow">EXPLAINABLE SCORING</span>
+                    <h2>Why this score?</h2>
+                </div>
+                <span id="passedRuleSummary" class="architecture-badge">0 passed</span>
+            </div>
+            <div id="scoreExplanation" class="score-explanation">
+                <div class="empty-state">Rule contributions will appear after evaluation.</div>
+            </div>
         </div>
 
 
@@ -369,6 +400,7 @@
                 <span class="eyebrow">SIDE-BY-SIDE</span>
                 <h2>Bidder Comparison</h2>
                 <p>Every bidder ingested this session, ranked by compliance score. Click one to switch every other tab to that bidder.</p>
+                <p id="comparisonDepartment" class="department-context hidden"></p>
             </div>
 
         </div>
