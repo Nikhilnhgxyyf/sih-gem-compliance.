@@ -78,6 +78,12 @@ class EngineTestCase(unittest.TestCase):
         self.assertEqual(result["new_decision"], "PASS")
         self.assertEqual(engine.current_rule_states["R001"], RuleStatus.PASS)
         self.assertEqual(engine.current_rule_states["R002"], RuleStatus.PASS)
+        blast = engine.analyze_blast_radius("E001")
+        self.assertEqual(blast["propagation_edges"], [
+            {"from": "E001", "to": "R001"},
+            {"from": "R001", "to": "R002"},
+        ])
+        self.assertGreater(blast["score_at_risk"], 0)
 
     def test_ledger_detects_tampering(self):
         engine = self.make_engine()

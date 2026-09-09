@@ -808,6 +808,49 @@ gap: 6px;
 margin-top: 15px;
 }
 
+.score-explanation-panel {
+margin-top: 18px;
+}
+
+.score-explanation {
+margin-top: 14px;
+}
+
+.score-rule-row {
+display: grid;
+grid-template-columns: 70px 80px 95px 1fr;
+gap: 10px;
+align-items: center;
+padding: 10px 0;
+border-bottom: 1px solid var(--border);
+font-size: 11px;
+}
+
+.score-rule-row small {
+color: var(--muted);
+}
+
+.blast-flow {
+display: flex;
+flex-direction: column;
+gap: 5px;
+margin-top: 14px;
+padding: 12px;
+border-left: 3px solid var(--blue);
+background: #f8fafc;
+font-family: "JetBrains Mono", monospace;
+font-size: 10px;
+}
+
+@media (max-width: 750px) {
+.score-rule-row {
+grid-template-columns: 60px 72px 1fr;
+}
+.score-rule-row small {
+grid-column: 1 / -1;
+}
+}
+
 .rule-chip {
 background: #eff6ff;
 color: #1d4ed8;

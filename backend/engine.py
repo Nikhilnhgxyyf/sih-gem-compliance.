@@ -1200,6 +1200,7 @@ class ProcurementIntelligenceEngine:
     ) -> dict:
 
         affected_rules: Set[str] = set()
+        propagation_edges: List[dict] = []
 
         queue = deque(
             [target_node_id]
@@ -1221,6 +1222,8 @@ class ProcurementIntelligenceEngine:
                 set(),
             ):
 
+                propagation_edges.append({"from": current, "to": dependent})
+
                 if dependent in self.rule_nodes:
 
                     affected_rules.add(
@@ -1237,6 +1240,13 @@ class ProcurementIntelligenceEngine:
             if self.rule_nodes[
                 rule_id
             ].is_mandatory
+        )
+
+        total_weight = sum(rule.weight for rule in self.rule_nodes.values())
+        score_at_risk = sum(
+            self.rule_nodes[rule_id].weight / total_weight * 100
+            for rule_id in affected_rules
+            if total_weight and self.current_rule_states.get(rule_id) == RuleStatus.PASS
         )
 
         if mandatory_count > 0:
@@ -1266,6 +1276,8 @@ class ProcurementIntelligenceEngine:
             "affected_rules": sorted(
                 affected_rules
             ),
+            "propagation_edges": propagation_edges,
+            "score_at_risk": round(score_at_risk, 2),
             "decision_sensitivity": sensitivity,
         }
 

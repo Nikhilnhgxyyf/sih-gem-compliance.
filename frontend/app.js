@@ -400,6 +400,8 @@ $("complianceScore")
     .style.background =
     `conic-gradient(#2563eb ${degrees}deg, #e2e8f0 ${degrees}deg)`;
 
+renderScoreExplanation();
+
 
 /* Mandatory failures */
 
@@ -421,6 +423,32 @@ if (!failures.length) {
                 <span>Mandatory procurement rule failed.</span>
             </div>
         `).join("");
+}
+
+function renderScoreExplanation() {
+
+    const rules = state.rules || [];
+    const totalWeight = rules.reduce((sum, rule) => sum + Number(rule.weight || 0), 0);
+    const passed = rules.filter(rule => state.ruleStatuses?.[rule.rule_id] === "PASS").length;
+    $("passedRuleSummary").textContent = `${passed}/${rules.length} passed`;
+
+    if (!rules.length || !totalWeight) {
+        $("scoreExplanation").innerHTML = '<div class="empty-state">No evaluated rules available.</div>';
+        return;
+    }
+
+    $("scoreExplanation").innerHTML = rules.map(rule => {
+        const status = state.ruleStatuses?.[rule.rule_id] || "REVIEW";
+        const contribution = status === "PASS" ? Number(rule.weight || 0) / totalWeight * 100 : 0;
+        return `
+            <div class="score-rule-row">
+                <strong>${escapeHtml(rule.rule_id)}</strong>
+                <span class="status-pill ${status}">${escapeHtml(status)}</span>
+                <span>${contribution.toFixed(1)} points</span>
+                <small>${escapeHtml(rule.clause_text)}</small>
+            </div>
+        `;
+    }).join("");
 }
 
 
@@ -1084,7 +1112,9 @@ try {
                 ? "MODERATE"
                 : affected.length
                     ? "LOW"
-                    : "NONE"
+                    : "NONE",
+        propagation_edges: affected.map(rule => ({ from: nodeId, to: rule })),
+        score_at_risk: 0
     });
 
 }
@@ -1094,6 +1124,7 @@ try {
 function renderBlastResult(result) {
 
 const rules = result.affected_rules || [];
+const edges = result.propagation_edges || [];
 
 $("blastResult").innerHTML = `
 
@@ -1118,6 +1149,16 @@ $("blastResult").innerHTML = `
         <strong>
             ${result.mandatory_rules_affected || 0}
         </strong>
+    </div>
+
+    <div class="detail-row">
+        <label>SCORE AT RISK IF INVALIDATED</label>
+        <strong>−${Number(result.score_at_risk || 0).toFixed(2)} points</strong>
+    </div>
+
+    <div class="blast-flow">
+        <strong>${escapeHtml(result.target_node || "Evidence")}</strong>
+        ${edges.length ? edges.map(edge => `<span>↳ ${escapeHtml(edge.from)} → <strong>${escapeHtml(edge.to)}</strong></span>`).join("") : '<span>No downstream dependency path.</span>'}
     </div>
 
     <div class="detail-row">
