@@ -1,11 +1,13 @@
 import unittest
+import tempfile
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
-from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus
+from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus, TemporalState
+from audit_store import SQLiteAuditStore
 
 
 class EngineTestCase(unittest.TestCase):
@@ -181,6 +183,73 @@ class EngineTestCase(unittest.TestCase):
         )
         with self.assertRaises(HTTPException):
             main.normalize_tender_department("x" * 201)
+
+    def test_evidence_dna_fingerprint_is_deterministic_and_value_sensitive(self):
+        engine = self.make_engine()
+        first = self.evidence("E001", "gstin", "27AAAAA0000A1Z5")
+        second = self.evidence("E002", "gstin", "27AAAAA0000A1Z5")
+        self.assertEqual(engine.evidence_fingerprint(first), engine.evidence_fingerprint(second))
+        second.extracted_value = "27BBBBB0000B1Z5"
+        self.assertNotEqual(engine.evidence_fingerprint(first), engine.evidence_fingerprint(second))
+
+    def test_temporal_states_cover_valid_expired_not_yet_and_unknown(self):
+        engine = self.make_engine()
+        at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.assertEqual(engine.is_valid_at(self.evidence("V", "x", 1).model_copy(update={"valid_from": datetime(2025, 1, 1, tzinfo=timezone.utc), "valid_until": datetime(2027, 1, 1, tzinfo=timezone.utc)}), at), TemporalState.VALID_AT_TIME)
+        self.assertEqual(engine.is_valid_at(self.evidence("E", "x", 1).model_copy(update={"valid_until": datetime(2025, 1, 1, tzinfo=timezone.utc)}), at), TemporalState.EXPIRED_AT_TIME)
+        self.assertEqual(engine.is_valid_at(self.evidence("N", "x", 1).model_copy(update={"valid_from": datetime(2027, 1, 1, tzinfo=timezone.utc)}), at), TemporalState.NOT_YET_VALID)
+        self.assertEqual(engine.is_valid_at(self.evidence("U", "x", 1), at), TemporalState.UNKNOWN_VALIDITY)
+
+    def test_removal_simulation_and_criticality_do_not_mutate_audit(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E001", "pan", "ABCDE1234F"))
+        engine.register_rule(RuleNode(rule_id="R001", clause_text="PAN", ast=ASTNode(op="EXISTS", field="pan")))
+        engine.rebuild_dependencies()
+        engine.evaluate_all_rules()
+        result = engine.simulate_evidence_removal("E001")
+        self.assertTrue(result["decision_changed"])
+        self.assertNotEqual(engine.evidence_nodes["E001"].status, "REJECTED")
+        self.assertTrue(engine.critical_evidence()[0]["single_point_of_failure"])
+
+    def test_new_audit_apis_expose_dna_replay_and_synthetic_demo(self):
+        import main
+        client = TestClient(main.app)
+        seeded = client.post("/api/v3/demo/seed")
+        self.assertEqual(seeded.status_code, 200)
+        audit_id = seeded.json()["audit_id"]
+        self.assertEqual(client.get("/api/v3/evidence/E-GST-001/dna").status_code, 200)
+        self.assertEqual(client.get(f"/api/v3/audits/{audit_id}/decision-dna").status_code, 200)
+        self.assertEqual(client.get(f"/api/v3/audits/{audit_id}/replay").status_code, 200)
+        self.assertEqual(client.get(f"/api/v3/audits/{audit_id}/critical-evidence").status_code, 200)
+
+    def test_decision_story_is_deterministic_and_cites_graph_identifiers(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E-PAN", "pan", "ABCDE1234F"))
+        engine.register_rule(RuleNode(rule_id="R-PAN", clause_text="PAN required", ast=ASTNode(op="EXISTS", field="pan")))
+        engine.rebuild_dependencies()
+        story = engine.decision_story()
+        self.assertIn("E-PAN", story["explanation"])
+        self.assertIn("R-PAN", story["explanation"])
+        self.assertEqual(story["rules"][0]["rule_id"], "R-PAN")
+        self.assertIn("DOCUMENT", {node["type"] for node in story["decision_skeleton"]["nodes"]})
+        self.assertIn("CLAIM", {node["type"] for node in story["decision_skeleton"]["nodes"]})
+
+    def test_sqlite_store_restores_engine_and_capsule_detects_tampering(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E-PAN", "pan", "ABCDE1234F"))
+        engine.register_rule(RuleNode(rule_id="R-PAN", clause_text="PAN required", ast=ASTNode(op="EXISTS", field="pan")))
+        engine.rebuild_dependencies()
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteAuditStore(f"{directory}/audit.db")
+            store.save_engine(engine, "B-1", "Bidder One", "T-1", "V1")
+            restored = store.load_engine("test-audit")
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored["engine"].calculate_overall_compliance().decision, "PASS")
+            capsule = engine.decision_capsule("B-1", "Bidder One", "T-1", "V1")
+            store.save_capsule("test-audit", capsule)
+            self.assertEqual(ProcurementIntelligenceEngine.verify_capsule(store.load_capsule("test-audit"))["status"], "VALID")
+            capsule["final_decision"]["decision"] = "FAIL"
+            self.assertEqual(ProcurementIntelligenceEngine.verify_capsule(capsule)["status"], "INTEGRITY MISMATCH")
 
 
 if __name__ == "__main__":

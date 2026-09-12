@@ -62,3 +62,22 @@ Uploads a document for AI verification.
   }
 }
 
+
+---
+
+## Causal Temporal Upgrade
+
+The prototype now treats compliance as an explainable decision state rather than an AI score. Evidence can carry provenance and validity intervals, deterministic rules produce reproducible outcomes, and the API can expose Evidence DNA, Decision DNA, causal paths, isolated evidence-removal simulations, critical-evidence ranking, integrity checks, and audit replay.
+
+### Demo (3–5 minutes)
+1. Use `POST /api/v3/demo/seed` to load **SYNTHETIC DEMO DATA** for Beta Tech Solutions.
+2. Inspect `GET /api/v3/evidence/E-GST-001/dna` and the audit timeline for provenance and temporal status.
+3. Open the causal graph and decision DNA for the active audit ID.
+4. Run `POST /api/v3/simulations` with `{"evidence_id":"E-GST-001"}` to compare an isolated removal scenario.
+5. Call replay and integrity endpoints to show reproducibility and the tamper-evident event chain.
+
+AI extraction is optional and degraded-mode failures do not replace deterministic audit functionality. Hashes are provenance/integrity identifiers, not guarantees of legal correctness or tamper prevention. The system contains potentially novel technical mechanisms; patentability and novelty require formal prior-art search and legal review.
+
+## Persistent Decision Capsules
+
+Audit state is persisted through the lightweight SQLite adapter (`AUDIT_DB_PATH`, default `backend/data/gem_audit.db`). The deterministic engine remains the decision authority; SQLite records sessions, evidence, rules, evaluations, decisions, ledger events, simulations, and portable Decision Capsules. A capsule can be saved, exported, imported, replayed, and integrity-verified without describing its SHA-256 fingerprint as encryption or legal proof.

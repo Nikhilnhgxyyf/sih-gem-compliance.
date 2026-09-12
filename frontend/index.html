@@ -106,7 +106,7 @@
 
         <div>
             <div class="eyebrow">PROCUREMENT AUDIT / LIVE SESSION</div>
-            <h1>Enterprise Compliance Console</h1>
+            <h1>Causal Temporal Procurement Intelligence</h1>
         </div>
 
         <div class="topbar-actions">
@@ -119,6 +119,10 @@
 
             <button class="icon-button" id="refreshButton" title="Refresh">
                 ↻
+            </button>
+
+            <button class="demo-button" id="loadDemoButton" type="button" title="Loads isolated synthetic demonstration data">
+                Load Synthetic Demo
             </button>
 
             <button class="reset-button" id="resetSessionButton" type="button" title="Clear the tender, all bidders, and audit data">
@@ -455,6 +459,20 @@
         </div>
 
         <div id="diffPanel" class="diff-panel hidden"></div>
+
+        <div class="panel decision-story-panel">
+            <div class="panel-header">
+                <div>
+                    <span class="eyebrow">EXPLAINABLE PROCUREMENT AI</span>
+                    <h2>Decision Story Mode</h2>
+                </div>
+                <div class="story-actions">
+                    <button id="showWhyButton" class="primary-button" type="button">Show Why</button>
+                    <button id="showSkeletonButton" class="text-button" type="button">Show Decision Skeleton</button>
+                </div>
+            </div>
+            <div id="decisionStoryContent" class="empty-state">Load an audit, then show the deterministic evidence-to-decision story.</div>
+        </div>
 
         <div class="graph-layout">
 
