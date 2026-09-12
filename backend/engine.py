@@ -16,6 +16,7 @@ from schemas import (
     RuleStatus,
     EvidenceStatus,
     ASTNode,
+    TemporalState,
 )
 
 
@@ -40,6 +41,7 @@ SUPPORTED_OPERATORS = {
 }
 
 MARGIN_PCT = 0.15
+ENGINE_VERSION = "4.0.0-causal-temporal"
 
 
 def check_margin(left: float, right: float, confidence: float) -> Tuple[bool, float]:
@@ -144,6 +146,8 @@ class ProcurementIntelligenceEngine:
             )
 
         self.tender_deadline = tender_deadline
+        self.evaluation_timestamp = tender_deadline
+        self.engine_version = ENGINE_VERSION
 
         # ----------------------------------------------------
         # Knowledge Graph
@@ -326,6 +330,9 @@ class ProcurementIntelligenceEngine:
                 f"Evidence node '{node.node_id}' already exists."
             )
 
+        node.normalized_value = node.normalized_value if node.normalized_value is not None else self._normalize_value(node.extracted_value)
+        node.evidence_type = node.evidence_type or node.entity_name
+        node.evidence_fingerprint = self.evidence_fingerprint(node)
         self.evidence_nodes[node.node_id] = node
 
         self.entity_to_evidence.setdefault(
@@ -402,6 +409,9 @@ class ProcurementIntelligenceEngine:
                         rid,
                         "SUPPORTS",
                     )
+                    self.evidence_nodes[evidence_id].dependent_rule_ids = sorted(set(
+                        self.evidence_nodes[evidence_id].dependent_rule_ids + [rid]
+                    ))
 
             refs = extract_rule_references(
                 rule.ast
@@ -483,13 +493,14 @@ class ProcurementIntelligenceEngine:
                 continue
 
             # Temporal validity
-            if (
-                node.valid_until
-                and node.valid_until < self.tender_deadline
-            ):
+            temporal = self.temporal_state(node)
+            if temporal == TemporalState.EXPIRED_AT_TIME:
 
                 node.status = EvidenceStatus.EXPIRED
 
+                continue
+
+            if temporal == TemporalState.NOT_YET_VALID:
                 continue
 
             active_nodes.append(node)
@@ -938,7 +949,7 @@ class ProcurementIntelligenceEngine:
             return (
                 RuleStatus.PASS if passed else RuleStatus.FAIL,
                 evidence_ids,
-                f"Equality comparison evaluated deterministically.",
+                "Equality comparison evaluated deterministically.",
                 confidence,
             )
 
@@ -981,7 +992,7 @@ class ProcurementIntelligenceEngine:
             return (
                 RuleStatus.PASS if passed else RuleStatus.FAIL,
                 evidence_ids,
-                f"Date comparison evaluated deterministically.",
+                "Date comparison evaluated deterministically.",
                 confidence,
             )
 
@@ -1041,6 +1052,12 @@ class ProcurementIntelligenceEngine:
             )
         )
 
+        if rule.requires_temporal_validity:
+            temporal_states = [self.temporal_state(self.evidence_nodes[eid]) for eid in evidence_ids if eid in self.evidence_nodes]
+            if not temporal_states or any(state != TemporalState.VALID_AT_TIME for state in temporal_states):
+                status = RuleStatus.REVIEW
+                reasoning = "Temporal validity is unavailable, expired, not yet effective, or conflicting at evaluation time."
+
         return RuleEvaluation(
             rule_id=rule_id,
             status=status,
@@ -1052,6 +1069,9 @@ class ProcurementIntelligenceEngine:
                 confidence,
                 4,
             ),
+            evaluated_at=self.evaluation_timestamp,
+            rule_version=rule.tender_version or rule.version,
+            inputs={"evaluation_timestamp": self.evaluation_timestamp.isoformat(), "ast": rule.ast.model_dump(mode="json")},
         )
 
     # ========================================================
@@ -1190,6 +1210,114 @@ class ProcurementIntelligenceEngine:
             ),
         )
 
+    def decision_dna(self, evaluation_timestamp: Optional[datetime] = None) -> dict:
+        """Canonical, reproducible decision-state summary and SHA-256 fingerprint."""
+        if evaluation_timestamp is not None:
+            self.evaluation_timestamp = self._parse_datetime(evaluation_timestamp)
+        evaluations = self.evaluate_all_rules()
+        decision = self.calculate_overall_compliance(evaluations)
+        state = {
+            "audit_id": self.audit_id,
+            "tender_deadline": self.tender_deadline.isoformat(),
+            "evaluation_timestamp": self.evaluation_timestamp.isoformat(),
+            "engine_version": self.engine_version,
+            "rule_set_fingerprint": self._canonical_hash({rid: self.rule_nodes[rid].model_dump(mode="json") for rid in sorted(self.rule_nodes)}),
+            "evidence_set_fingerprint": self._canonical_hash({eid: self.evidence_dna(eid)["evidence_fingerprint"] for eid in sorted(self.evidence_nodes)}),
+            "relevant_evidence_ids": sorted(self.evidence_nodes),
+            "evidence_states": {eid: self.temporal_state(node).value for eid, node in sorted(self.evidence_nodes.items())},
+            "rule_evaluation_states": {rid: evaluations[rid].status.value for rid in sorted(evaluations)},
+            "officer_interventions": [e.event_id for e in self.ledger if e.action == "EVIDENCE_CORRECTION"],
+            "decision": decision.model_dump(mode="json"),
+        }
+        state["decision_fingerprint"] = self._canonical_hash(state)
+        return state
+
+    def causal_graph(self) -> dict:
+        decision = self.calculate_overall_compliance().model_dump(mode="json")
+        nodes = [{"id": eid, "type": "EVIDENCE", "label": n.entity_name, "data": self.evidence_dna(eid)} for eid, n in self.evidence_nodes.items()]
+        document_nodes = {}
+        claim_nodes = {}
+        for evidence_id, evidence in self.evidence_nodes.items():
+            document_id = f"DOCUMENT-{self._canonical_hash({'source': evidence.source_doc})[:12]}"
+            document_nodes[document_id] = {"id": document_id, "type": "DOCUMENT", "label": evidence.source_doc,
+                                           "data": {"source_document": evidence.source_doc, "document_hash": evidence.document_hash}}
+            claim_id = f"CLAIM-{evidence.entity_name}"
+            claim_nodes[claim_id] = {"id": claim_id, "type": "CLAIM", "label": evidence.entity_name,
+                                     "data": {"entity_name": evidence.entity_name, "evidence_ids": sorted(self.entity_to_evidence.get(evidence.entity_name, []))}}
+        nodes += list(document_nodes.values()) + list(claim_nodes.values())
+        nodes += [{"id": rid, "type": "RULE", "label": r.clause_text, "data": r.model_dump(mode="json")} for rid, r in self.rule_nodes.items()]
+        nodes += [{"id": f"EVAL-{rid}", "type": "RULE_EVALUATION", "label": self.current_rule_states.get(rid, RuleStatus.REVIEW).value, "data": self.current_rule_evaluations.get(rid, RuleEvaluation(rule_id=rid, status=RuleStatus.REVIEW, reasoning="Not evaluated", confidence_score=0)).model_dump(mode="json")} for rid in self.rule_nodes]
+        nodes.append({"id": "DECISION", "type": "DECISION", "label": decision["decision"], "data": decision})
+        edges = [e.model_dump(mode="json") for e in self.edges]
+        for evidence_id, evidence in self.evidence_nodes.items():
+            document_id = f"DOCUMENT-{self._canonical_hash({'source': evidence.source_doc})[:12]}"
+            claim_id = f"CLAIM-{evidence.entity_name}"
+            edges += [{"source_id": document_id, "target_id": evidence_id, "relationship": "CONTAINS"},
+                      {"source_id": evidence_id, "target_id": claim_id, "relationship": "SUPPORTS"}]
+        for edge in self.edges:
+            if edge.source_id in self.evidence_nodes and edge.target_id in self.rule_nodes:
+                edges.append({"source_id": f"CLAIM-{self.evidence_nodes[edge.source_id].entity_name}", "target_id": edge.target_id, "relationship": "AFFECTS"})
+        edges += [{"source_id": rid, "target_id": f"EVAL-{rid}", "relationship": "CAUSED"} for rid in self.rule_nodes]
+        edges += [{"source_id": f"EVAL-{rid}", "target_id": "DECISION", "relationship": "AFFECTS"} for rid in self.rule_nodes]
+        return {"nodes": nodes, "edges": edges}
+
+    def causal_path(self) -> dict:
+        graph = self.causal_graph()
+        return {"audit_id": self.audit_id, "decision": self.calculate_overall_compliance().model_dump(mode="json"), "paths": [
+            {"evidence_id": eid, "rule_ids": self.analyze_blast_radius(eid)["affected_rules"]}
+            for eid in sorted(self.evidence_nodes)
+        ], "graph": graph}
+
+    def decision_story(self) -> dict:
+        """Build an officer-readable explanation exclusively from graph and rule state."""
+        evaluations = self.evaluate_all_rules()
+        decision = self.calculate_overall_compliance(evaluations)
+        critical = {item["evidence_id"]: item for item in self.critical_evidence()}
+        evidence_items = []
+        rule_items = []
+        paths = []
+        for evidence_id, evidence in sorted(self.evidence_nodes.items()):
+            impacted_rules = self.analyze_blast_radius(evidence_id)["affected_rules"]
+            temporal_state = self.temporal_state(evidence).value
+            evidence_items.append({"evidence_id": evidence_id, "source_document": evidence.source_doc,
+                                   "temporal_state": temporal_state, "dependent_rule_ids": impacted_rules,
+                                   "critical": critical[evidence_id]["single_point_of_failure"],
+                                   "criticality_score": critical[evidence_id]["criticality_score"]})
+            for rule_id in impacted_rules:
+                paths.append([f"DOCUMENT:{evidence.source_doc}", evidence_id, f"CLAIM:{evidence.entity_name}", rule_id, f"EVAL-{rule_id}", "DECISION"])
+        for rule_id, rule in sorted(self.rule_nodes.items()):
+            evaluation = evaluations[rule_id]
+            rule_items.append({"rule_id": rule_id, "status": evaluation.status.value,
+                               "evidence_ids": evaluation.evidence_ids, "reason": evaluation.reasoning,
+                               "rule_version": evaluation.rule_version})
+
+        sentences = [f"Decision {decision.decision} was produced deterministically from {len(rule_items)} evaluated rule(s)."]
+        for item in evidence_items:
+            rules = ", ".join(item["dependent_rule_ids"]) or "no direct rule"
+            sentences.append(f"Evidence {item['evidence_id']} existed in {item['source_document']}; temporal state: {item['temporal_state']}; it fed {rules}.")
+        for item in rule_items:
+            references = ", ".join(item["evidence_ids"]) or "no resolved evidence"
+            sentences.append(f"Rule {item['rule_id']} is {item['status']} using {references}: {item['reason']}")
+        alterations = []
+        for evidence_id, item in sorted(critical.items()):
+            if item["decision_impact"]:
+                impact = self.simulate_evidence_removal(evidence_id)
+                alteration = (f"Removing {evidence_id} changes {impact['original_decision']} to "
+                               f"{impact['simulated_decision']} and affects {', '.join(impact['affected_rules']) or 'no rules'}.")
+                alterations.append(alteration)
+        if alterations:
+            sentences.extend(alterations)
+        else:
+            sentences.append("No single evidence removal currently changes the decision; combined changes are not inferred by this story.")
+        graph = self.causal_graph()
+        return {"audit_id": self.audit_id, "decision": decision.model_dump(mode="json"),
+                "explanation": " ".join(sentences), "evidence": evidence_items, "rules": rule_items,
+                "critical_evidence": [item for item in critical.values() if item["single_point_of_failure"]],
+                "decision_paths": paths, "what_changes_decision": alterations,
+                "graph_highlights": {"evidence_ids": sorted(self.evidence_nodes), "rule_ids": sorted(self.rule_nodes),
+                                     "critical_evidence_ids": sorted(evidence_id for evidence_id, item in critical.items() if item["single_point_of_failure"])},
+                "decision_skeleton": graph}
+
     # ========================================================
     # BLAST RADIUS
     # ========================================================
@@ -1280,6 +1408,71 @@ class ProcurementIntelligenceEngine:
             "score_at_risk": round(score_at_risk, 2),
             "decision_sensitivity": sensitivity,
         }
+
+    def simulate_evidence_removal(self, evidence_id: str) -> dict:
+        """Run an isolated removal scenario; the live audit and ledger remain untouched."""
+        if evidence_id not in self.evidence_nodes:
+            raise KeyError(f"Evidence node '{evidence_id}' not found.")
+        self.evaluate_all_rules()
+        baseline = self.calculate_overall_compliance()
+        baseline_states = dict(self.current_rule_states)
+        simulation = copy.deepcopy(self)
+        simulation.evidence_nodes[evidence_id].status = EvidenceStatus.REJECTED
+        simulated_evaluations = simulation.evaluate_all_rules()
+        projected = simulation.calculate_overall_compliance(simulated_evaluations)
+        affected_rules = self.analyze_blast_radius(evidence_id)["affected_rules"]
+        changed = [rid for rid in affected_rules if baseline_states.get(rid) != simulated_evaluations[rid].status]
+        return {
+            "simulation_id": f"SIM-{self.audit_id}-{evidence_id}", "simulation": True,
+            "notice": "SIMULATED — NOT ACTUAL AUDIT STATE", "selected_evidence": evidence_id,
+            "original_score": baseline.compliance_score, "simulated_score": projected.compliance_score,
+            "score_delta": round(projected.compliance_score - baseline.compliance_score, 2),
+            "original_decision": baseline.decision, "simulated_decision": projected.decision,
+            "decision_changed": baseline.decision != projected.decision,
+            "affected_evidence": [evidence_id], "affected_claims": [], "affected_rules": affected_rules,
+            "affected_paths": [{"from": edge["from"], "to": edge["to"]} for edge in self.analyze_blast_radius(evidence_id)["propagation_edges"]],
+            "changed_rules": changed,
+        }
+
+    def critical_evidence(self) -> List[dict]:
+        """Single-removal approximation, deliberately not presented as an exact minimum cut."""
+        self.evaluate_all_rules()
+        results = []
+        for evidence_id in sorted(self.evidence_nodes):
+            impact = self.simulate_evidence_removal(evidence_id)
+            radius = self.analyze_blast_radius(evidence_id)
+            decision_impact = impact["decision_changed"]
+            score_loss = max(0, -impact["score_delta"])
+            mandatory = radius["mandatory_rules_affected"]
+            criticality = round(min(100, score_loss + mandatory * 25 + (40 if decision_impact else 0)), 2)
+            results.append({"evidence_id": evidence_id, "criticality_score": criticality,
+                            "decision_impact": decision_impact, "affected_rule_count": len(radius["affected_rules"]),
+                            "affected_path_count": len(radius["propagation_edges"]),
+                            "single_point_of_failure": decision_impact and mandatory > 0,
+                            "dependency_count": len(radius["affected_rules"]),
+                            "mandatory_dependency_count": mandatory})
+        return sorted(results, key=lambda item: (-item["criticality_score"], item["evidence_id"]))
+
+    def replay(self) -> dict:
+        """Replay from the current recorded state, exposing engine-version differences explicitly."""
+        stored = self.decision_dna()
+        reconstructed = copy.deepcopy(self).decision_dna()
+        differences = []
+        if stored["engine_version"] != reconstructed["engine_version"]:
+            differences.append("Rule engine version changed")
+        if stored["decision_fingerprint"] != reconstructed["decision_fingerprint"]:
+            differences.append("Decision state fingerprint differs")
+        return {"audit_id": self.audit_id, "stored_decision": stored["decision"],
+                "replayed_decision": reconstructed["decision"], "match": not differences,
+                "differences": differences, "stored_decision_dna": stored,
+                "replayed_decision_dna": reconstructed}
+
+    def timeline(self) -> List[dict]:
+        return [{"evidence_id": eid, "entity_name": node.entity_name,
+                 "effective_from": node.valid_from.isoformat() if node.valid_from else None,
+                 "effective_until": node.valid_until.isoformat() if node.valid_until else None,
+                 "evaluation_timestamp": self.evaluation_timestamp.isoformat(),
+                 "state": self.temporal_state(node).value} for eid, node in sorted(self.evidence_nodes.items())]
 
     # ========================================================
     # TRUE INCREMENTAL PROPAGATION
@@ -1648,3 +1841,36 @@ class ProcurementIntelligenceEngine:
                 self.ledger
             ),
             }
+    def temporal_state(self, node: EvidenceNode, at: Optional[datetime] = None) -> TemporalState:
+        """Classify an evidenced interval without guessing absent dates."""
+        at = at or self.evaluation_timestamp
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        if node.status == EvidenceStatus.CONFLICTING:
+            return TemporalState.CONFLICTING_AT_TIME
+        if node.valid_from is None and node.valid_until is None:
+            return TemporalState.UNKNOWN_VALIDITY
+        if node.valid_from and node.valid_from > at:
+            return TemporalState.NOT_YET_VALID
+        if node.valid_until and node.valid_until < at:
+            return TemporalState.EXPIRED_AT_TIME
+        return TemporalState.VALID_AT_TIME
+
+    def is_valid_at(self, node: EvidenceNode, at: datetime) -> TemporalState:
+        return self.temporal_state(node, at)
+
+    def evidence_fingerprint(self, node: EvidenceNode) -> str:
+        """Integrity/provenance identifier, not a legal correctness assertion."""
+        payload = node.model_dump(mode="json", exclude={"node_id", "evidence_fingerprint", "status", "verified_by", "verified_at", "originating_event"})
+        return self._canonical_hash(payload)
+
+    def evidence_dna(self, evidence_id: str) -> dict:
+        node = self.evidence_nodes[evidence_id]
+        dna = node.model_dump(mode="json")
+        dna.update({
+            "evidence_id": node.node_id,
+            "temporal_state": self.temporal_state(node).value,
+            "dependent_rule_ids": sorted(set(node.dependent_rule_ids)),
+            "evidence_fingerprint": self.evidence_fingerprint(node),
+        })
+        return dna
