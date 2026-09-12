@@ -1318,6 +1318,55 @@ class ProcurementIntelligenceEngine:
                                      "critical_evidence_ids": sorted(evidence_id for evidence_id, item in critical.items() if item["single_point_of_failure"])},
                 "decision_skeleton": graph}
 
+    def decision_capsule(self, bidder_id: str, bidder_label: str,
+                         tender_id: Optional[str] = None,
+                         tender_version: Optional[str] = None) -> dict:
+        """Portable, canonical audit state for persistence, export, and verification."""
+        evaluations = self.evaluate_all_rules()
+        decision = self.calculate_overall_compliance(evaluations)
+        decision_dna = self.decision_dna()
+        capsule = {
+            "capsule_version": "1.0",
+            "audit_id": self.audit_id,
+            "bidder": {"bidder_id": bidder_id, "bidder_label": bidder_label},
+            "tender_reference": tender_id,
+            "tender_version": tender_version,
+            "tender_deadline": self.tender_deadline.isoformat(),
+            "engine_version": self.engine_version,
+            "evaluation_timestamp": self.evaluation_timestamp.isoformat(),
+            "evidence_snapshot": [self.evidence_dna(evidence_id) for evidence_id in sorted(self.evidence_nodes)],
+            "rule_snapshot": [self.rule_nodes[rule_id].model_dump(mode="json") for rule_id in sorted(self.rule_nodes)],
+            "evaluation_snapshot": [evaluations[rule_id].model_dump(mode="json") for rule_id in sorted(evaluations)],
+            "final_decision": decision.model_dump(mode="json"),
+            "evidence_dna": {evidence_id: self.evidence_dna(evidence_id)["evidence_fingerprint"] for evidence_id in sorted(self.evidence_nodes)},
+            "decision_dna": decision_dna,
+            "causal_graph": self.causal_graph(),
+            "critical_evidence": self.critical_evidence(),
+            "audit_timeline": self.timeline(),
+            "officer_actions": [event.model_dump(mode="json") for event in self.ledger if event.action == "EVIDENCE_CORRECTION"],
+            "audit_events": [event.model_dump(mode="json") for event in self.ledger],
+        }
+        capsule["integrity_metadata"] = {
+            "algorithm": "SHA-256",
+            "decision_fingerprint": decision_dna["decision_fingerprint"],
+            "event_chain_valid": self.verify_chain_integrity()[0],
+            "event_chain_root": self.merkle_root(),
+            "capsule_fingerprint": self._canonical_hash(capsule),
+        }
+        return capsule
+
+    @classmethod
+    def verify_capsule(cls, capsule: dict) -> dict:
+        """Verify persisted capsule content without claiming that hashes are encryption."""
+        integrity = capsule.get("integrity_metadata", {})
+        canonical = dict(capsule)
+        canonical.pop("integrity_metadata", None)
+        expected = integrity.get("capsule_fingerprint")
+        actual = cls._canonical_hash(canonical)
+        return {"audit_id": capsule.get("audit_id"), "status": "VALID" if expected == actual else "INTEGRITY MISMATCH",
+                "stored_fingerprint": expected, "calculated_fingerprint": actual,
+                "event_chain_valid_at_save": integrity.get("event_chain_valid")}
+
     # ========================================================
     # BLAST RADIUS
     # ========================================================

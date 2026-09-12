@@ -6,7 +6,8 @@ This report records the post-change verification of the causal-temporal upgrade 
 ## Files changed
 - `backend/schemas.py` — Evidence DNA provenance, temporal states, tender-version and evaluation metadata.
 - `backend/engine.py` — deterministic temporal evaluation, DNA, causal graph/path, Decision Story, isolated simulation, criticality and replay.
-- `backend/main.py` — compatible v3 audit APIs, synthetic demo seed and simulation endpoint.
+- `backend/main.py` — compatible v3 audit APIs, synthetic demo seed, simulation endpoint, and Decision Capsule routes.
+- `backend/audit_store.py` — SQLite persistence adapter for sessions, snapshots, normalized audit records, simulations, and capsules.
 - `backend/test_engine.py` — deterministic engine and API coverage.
 - `frontend/index.html`, `frontend/app.js`, `frontend/style.css` — synthetic demo action, Decision Story Mode, and Decision Skeleton/X-Ray interaction.
 - `README.md`, `docs/ARCHITECTURE.md`, `docs/INVENTION_DISCLOSURE.md` — product and technical documentation.
@@ -25,6 +26,10 @@ This report records the post-change verification of the causal-temporal upgrade 
 | `GET /api/v3/audits/{audit_id}/integrity` | Audit-event hash-chain verification. |
 | `POST /api/v3/simulations` | Isolated `REMOVE_EVIDENCE` scenario. |
 | `POST /api/v3/demo/seed` | Clearly marked synthetic demo audit. |
+| `POST /api/v3/audits/{audit_id}/capsule/save` | Persist a portable Decision Capsule. |
+| `GET /api/v3/audits/{audit_id}/capsule` / `export` | Retrieve or export a stored capsule. |
+| `POST /api/v3/audits/capsule/import` | Integrity-check and restore a capsule. |
+| `POST /api/v3/audits/{audit_id}/capsule/replay` / `verify` | Replay and integrity-verify stored state. |
 
 ## Models added or extended
 - Added `TemporalState`.
@@ -38,8 +43,9 @@ This report records the post-change verification of the causal-temporal upgrade 
 - The frontend is a static HTML/CSS/JavaScript application and has no package manager build step; JavaScript syntax and static-server delivery were validated instead.
 
 ## Deployment changes
-- No new runtime dependency or infrastructure change is required.
-- The existing in-memory session model remains; persistent multi-user audit storage is not introduced.
+- No external database dependency is required; SQLite is part of Python’s standard library.
+- The active in-memory session remains for UI responsiveness, with persistent SQLite snapshots and Decision Capsules for restart recovery.
+- SQLite local storage is appropriate for this prototype, not shared multi-instance production persistence.
 - Configure `ALLOWED_ORIGINS` for the deployed frontend origin(s).
 
 ## Required environment variables
@@ -49,10 +55,12 @@ This report records the post-change verification of the causal-temporal upgrade 
 | `GEMINI_MODEL` | Optional | Overrides the primary Gemini extraction model. |
 | `GEMINI_FALLBACK_MODEL` | Optional | Overrides the fallback Gemini extraction model. |
 | `ALLOWED_ORIGINS` | Recommended for deployment | Comma-separated CORS origins. |
+| `AUDIT_DB_PATH` | Optional | Persistent SQLite database path; defaults to `backend/data/gem_audit.db`. |
 | `DEMO_FIXTURE_ONLY` | Optional | Limits demo extraction to recognised fixtures. |
 
 ## Verification completed
 - Backend unit tests and FastAPI TestClient API smoke tests passed.
+- Restart recovery was verified in two separate Python processes against the same temporary `AUDIT_DB_PATH`.
 - Python syntax compilation passed.
 - Static frontend JavaScript syntax and HTTP serving passed.
 - Existing JSON ingestion, evaluation, evidence graph, officer override, counterfactual, and blast-radius contracts are exercised by the automated suite/smoke test.

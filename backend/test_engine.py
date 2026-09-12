@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -6,6 +7,7 @@ from fastapi import HTTPException
 
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus, TemporalState
+from audit_store import SQLiteAuditStore
 
 
 class EngineTestCase(unittest.TestCase):
@@ -231,6 +233,23 @@ class EngineTestCase(unittest.TestCase):
         self.assertEqual(story["rules"][0]["rule_id"], "R-PAN")
         self.assertIn("DOCUMENT", {node["type"] for node in story["decision_skeleton"]["nodes"]})
         self.assertIn("CLAIM", {node["type"] for node in story["decision_skeleton"]["nodes"]})
+
+    def test_sqlite_store_restores_engine_and_capsule_detects_tampering(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E-PAN", "pan", "ABCDE1234F"))
+        engine.register_rule(RuleNode(rule_id="R-PAN", clause_text="PAN required", ast=ASTNode(op="EXISTS", field="pan")))
+        engine.rebuild_dependencies()
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteAuditStore(f"{directory}/audit.db")
+            store.save_engine(engine, "B-1", "Bidder One", "T-1", "V1")
+            restored = store.load_engine("test-audit")
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored["engine"].calculate_overall_compliance().decision, "PASS")
+            capsule = engine.decision_capsule("B-1", "Bidder One", "T-1", "V1")
+            store.save_capsule("test-audit", capsule)
+            self.assertEqual(ProcurementIntelligenceEngine.verify_capsule(store.load_capsule("test-audit"))["status"], "VALID")
+            capsule["final_decision"]["decision"] = "FAIL"
+            self.assertEqual(ProcurementIntelligenceEngine.verify_capsule(capsule)["status"], "INTEGRITY MISMATCH")
 
 
 if __name__ == "__main__":

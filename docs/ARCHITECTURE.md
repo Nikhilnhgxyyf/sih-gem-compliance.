@@ -29,4 +29,4 @@ Evidence DNA → Temporal Engine → Deterministic Rule Engine → Causal Graph
 - **Tampered audit event:** hash-chain verification reports the event/link failure.
 
 ## Deployment and limits
-The current prototype stores an active audit session in process memory. It is demo-friendly but is not durable multi-user storage. CORS is configured with `ALLOWED_ORIGINS`; secrets remain server-side environment configuration.
+The active working session remains in memory for low-latency UI operations, while `SQLiteAuditStore` persists audit sessions, evidence, rules, evaluations, decisions, events, simulations, and Decision Capsules at `AUDIT_DB_PATH`. SQLite is local prototype persistence, not a multi-instance shared database. CORS is configured with `ALLOWED_ORIGINS`; secrets remain server-side environment configuration.

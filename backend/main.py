@@ -7,10 +7,11 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest, ASTNode
+from schemas import AuditEvent, EvidenceNode, RuleEvaluation, RuleNode, EvidenceCorrectionRequest, ASTNode
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
 from demo_fixtures import try_fixture_extraction
+from audit_store import SQLiteAuditStore
 
 app = FastAPI(
     title="GeM AI Auditor V3",
@@ -50,6 +51,7 @@ MAX_FILE_SIZE_MB = 15
 engines: Dict[str, ProcurementIntelligenceEngine] = {}
 bidder_labels: Dict[str, str] = {}
 active_bidder_id: Optional[str] = None
+audit_store = SQLiteAuditStore()
 
 # The tender's rules are compiled ONCE (whenever a tender_file is supplied)
 # and reused for every bidder evaluated against it after that. Without
@@ -87,12 +89,35 @@ def clear_audit_session() -> dict:
     current_tender_deadline = None
     current_tender_filename = None
     current_tender_department = None
+    audit_store.deactivate_all()
     return {"cleared_bidders": cleared_bidders}
 
 
+def persist_engine(engine: ProcurementIntelligenceEngine, bidder_id: str) -> None:
+    """Store state after a mutation; the deterministic engine remains authoritative."""
+    rule_versions = sorted({rule.tender_version for rule in engine.rule_nodes.values()})
+    audit_store.save_engine(
+        engine=engine,
+        bidder_id=bidder_id,
+        bidder_label=bidder_labels.get(bidder_id, bidder_id),
+        tender_id=current_tender_filename,
+        tender_version=rule_versions[0] if len(rule_versions) == 1 else None,
+    )
+
+
 def current_engine() -> ProcurementIntelligenceEngine:
-    global active_bidder_id
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename
     if active_bidder_id is None or active_bidder_id not in engines:
+        restored = audit_store.latest_active()
+        if restored:
+            restored_bidder_id = restored["bidder_id"]
+            engines[restored_bidder_id] = restored["engine"]
+            bidder_labels[restored_bidder_id] = restored["bidder_label"]
+            active_bidder_id = restored_bidder_id
+            current_tender_filename = restored.get("tender_id")
+            current_tender_deadline = restored["engine"].tender_deadline
+            current_tender_rules = [rule.model_copy(deep=True) for rule in restored["engine"].rule_nodes.values()]
+            return restored["engine"]
         if "EMPTY" not in engines:
             engines["EMPTY"] = ProcurementIntelligenceEngine(
                 audit_id="GEMA-EMPTY", tender_deadline=DEFAULT_TENDER_DEADLINE
@@ -246,6 +271,7 @@ async def ingest_documents(
     engines[bidder_id] = new_engine
     bidder_labels[bidder_id] = label
     active_bidder_id = bidder_id
+    persist_engine(new_engine, bidder_id)
 
     return {
         "message": "Documents extracted and knowledge graph constructed.",
@@ -442,6 +468,8 @@ async def ingest(evidence: List[EvidenceNode], rules: List[RuleNode]):
             payload={"evidence_count": len(evidence), "rule_count": len(rules)},
         )
 
+        persist_engine(engine, active_bidder_id or "EMPTY")
+
         return {
             "message": "Knowledge graph constructed.",
             "evidence_count": len(engine.evidence_nodes),
@@ -564,6 +592,93 @@ async def audit_integrity(audit_id: str):
     return {"audit_id": audit_id, "chain_valid": valid, "message": message, "merkle_root": engine.merkle_root(), "event_count": len(engine.ledger)}
 
 
+def _capsule_for_active_audit(audit_id: str) -> tuple[ProcurementIntelligenceEngine, str, str]:
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        restored = audit_store.load_engine(audit_id)
+        if restored is None:
+            raise HTTPException(status_code=404, detail="Audit not found.")
+        return restored["engine"], restored["bidder_id"], restored["bidder_label"]
+    return engine, active_bidder_id or "EMPTY", bidder_labels.get(active_bidder_id or "EMPTY", active_bidder_id or "EMPTY")
+
+
+@app.post("/api/v3/audits/{audit_id}/capsule/save")
+async def save_decision_capsule(audit_id: str):
+    engine, bidder_id, bidder_label = _capsule_for_active_audit(audit_id)
+    capsule = engine.decision_capsule(bidder_id, bidder_label, current_tender_filename)
+    audit_store.save_capsule(audit_id, capsule)
+    persist_engine(engine, bidder_id)
+    return {"audit_id": audit_id, "status": "SAVED", "integrity_metadata": capsule["integrity_metadata"]}
+
+
+@app.get("/api/v3/audits/{audit_id}/capsule")
+async def get_decision_capsule(audit_id: str):
+    capsule = audit_store.load_capsule(audit_id)
+    if capsule is None:
+        raise HTTPException(status_code=404, detail="Decision capsule not found. Save the audit capsule first.")
+    return capsule
+
+
+@app.get("/api/v3/audits/{audit_id}/capsule/export")
+async def export_decision_capsule(audit_id: str):
+    return await get_decision_capsule(audit_id)
+
+
+class CapsuleImportRequest(BaseModel):
+    capsule: Dict[str, Any]
+
+
+@app.post("/api/v3/audits/capsule/import")
+async def import_decision_capsule(request: CapsuleImportRequest):
+    capsule = request.capsule
+    verification = ProcurementIntelligenceEngine.verify_capsule(capsule)
+    if verification["status"] != "VALID":
+        raise HTTPException(status_code=422, detail="INTEGRITY MISMATCH: capsule fingerprint does not match its contents.")
+    try:
+        engine = ProcurementIntelligenceEngine(capsule["audit_id"], datetime.fromisoformat(capsule["tender_deadline"]))
+        engine.evaluation_timestamp = datetime.fromisoformat(capsule["evaluation_timestamp"])
+        engine.engine_version = capsule.get("engine_version", engine.engine_version)
+        engine.ledger = []
+        for payload in capsule["evidence_snapshot"]:
+            engine.register_evidence(EvidenceNode.model_validate(payload))
+        for payload in capsule["rule_snapshot"]:
+            engine.register_rule(RuleNode.model_validate(payload))
+        engine.rebuild_dependencies()
+        engine.current_rule_evaluations = {item["rule_id"]: RuleEvaluation.model_validate(item)
+                                           for item in capsule["evaluation_snapshot"]}
+        engine.current_rule_states = {rule_id: evaluation.status for rule_id, evaluation in engine.current_rule_evaluations.items()}
+        engine.ledger = [AuditEvent.model_validate(item) for item in capsule.get("audit_events", [])]
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid decision capsule: {exc}")
+    bidder = capsule.get("bidder", {})
+    bidder_id = bidder.get("bidder_id", f"IMPORTED-{engine.audit_id}")
+    bidder_label = bidder.get("bidder_label", bidder_id)
+    engines[bidder_id] = engine
+    bidder_labels[bidder_id] = bidder_label
+    global active_bidder_id
+    active_bidder_id = bidder_id
+    audit_store.save_capsule(engine.audit_id, capsule)
+    persist_engine(engine, bidder_id)
+    return {"audit_id": engine.audit_id, "bidder_id": bidder_id, "status": "IMPORTED", "integrity": verification}
+
+
+@app.post("/api/v3/audits/{audit_id}/capsule/replay")
+async def replay_decision_capsule(audit_id: str):
+    capsule = audit_store.load_capsule(audit_id)
+    if capsule is None:
+        raise HTTPException(status_code=404, detail="Decision capsule not found. Save the audit capsule first.")
+    engine, _, _ = _capsule_for_active_audit(audit_id)
+    return {"capsule_integrity": ProcurementIntelligenceEngine.verify_capsule(capsule), "replay": engine.replay()}
+
+
+@app.post("/api/v3/audits/{audit_id}/capsule/verify")
+async def verify_decision_capsule(audit_id: str):
+    capsule = audit_store.load_capsule(audit_id)
+    if capsule is None:
+        raise HTTPException(status_code=404, detail="Decision capsule not found. Save the audit capsule first.")
+    return ProcurementIntelligenceEngine.verify_capsule(capsule)
+
+
 @app.post("/api/v3/officer-override")
 async def officer_override(request: EvidenceCorrectionRequest):
     engine = current_engine()
@@ -574,6 +689,7 @@ async def officer_override(request: EvidenceCorrectionRequest):
             actor=request.actor,
             reason=request.reason,
         )
+        persist_engine(engine, active_bidder_id or "EMPTY")
         return {
             "message": "Evidence correction propagated.",
             "impact_analysis": result,
@@ -629,7 +745,10 @@ async def create_simulation(request: SimulationRequest):
     if request.action != "REMOVE_EVIDENCE":
         raise HTTPException(status_code=422, detail="Only REMOVE_EVIDENCE is currently supported deterministically.")
     try:
-        return current_engine().simulate_evidence_removal(request.evidence_id)
+        engine = current_engine()
+        simulation = engine.simulate_evidence_removal(request.evidence_id)
+        audit_store.save_simulation(engine.audit_id, simulation)
+        return simulation
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -669,6 +788,7 @@ async def seed_synthetic_demo():
     current_tender_deadline = deadline
     current_tender_filename = "SYNTHETIC_TENDER_V3.pdf"
     current_tender_department = "Synthetic Demonstration Authority"
+    persist_engine(engine, "BIDDER-DEMO")
     return {"message": "Synthetic demo audit loaded.", "synthetic": True, "bidder_id": "BIDDER-DEMO", "audit_id": engine.audit_id, "decision": engine.calculate_overall_compliance().model_dump(mode="json")}
 
 

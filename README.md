@@ -77,3 +77,7 @@ The prototype now treats compliance as an explainable decision state rather than
 5. Call replay and integrity endpoints to show reproducibility and the tamper-evident event chain.
 
 AI extraction is optional and degraded-mode failures do not replace deterministic audit functionality. Hashes are provenance/integrity identifiers, not guarantees of legal correctness or tamper prevention. The system contains potentially novel technical mechanisms; patentability and novelty require formal prior-art search and legal review.
+
+## Persistent Decision Capsules
+
+Audit state is persisted through the lightweight SQLite adapter (`AUDIT_DB_PATH`, default `backend/data/gem_audit.db`). The deterministic engine remains the decision authority; SQLite records sessions, evidence, rules, evaluations, decisions, ledger events, simulations, and portable Decision Capsules. A capsule can be saved, exported, imported, replayed, and integrity-verified without describing its SHA-256 fingerprint as encryption or legal proof.
