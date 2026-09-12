@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
+from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest, ASTNode
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
 from demo_fixtures import try_fixture_extraction
@@ -486,7 +486,82 @@ async def blast_radius(node_id: str):
     engine = current_engine()
     if node_id not in engine.evidence_nodes:
         raise HTTPException(status_code=404, detail="Evidence node not found.")
-    return engine.analyze_blast_radius(node_id)
+    # Retains the original fields and adds an isolated decision-impact run.
+    return {**engine.analyze_blast_radius(node_id), "simulation": engine.simulate_evidence_removal(node_id)}
+
+
+@app.get("/api/v3/evidence/{evidence_id}/dna")
+async def evidence_dna(evidence_id: str):
+    engine = current_engine()
+    if evidence_id not in engine.evidence_nodes:
+        raise HTTPException(status_code=404, detail="Evidence node not found.")
+    return engine.evidence_dna(evidence_id)
+
+
+@app.get("/api/v3/audits/{audit_id}/timeline")
+async def audit_timeline(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return {"audit_id": audit_id, "timeline": engine.timeline()}
+
+
+@app.get("/api/v3/audits/{audit_id}/decision-dna")
+async def audit_decision_dna(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return engine.decision_dna()
+
+
+@app.get("/api/v3/audits/{audit_id}/causal-graph")
+async def audit_causal_graph(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return engine.causal_graph()
+
+
+@app.get("/api/v3/decision/{audit_id}/causal-path")
+async def decision_causal_path(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return engine.causal_path()
+
+
+@app.get("/api/v3/audits/{audit_id}/decision-story")
+async def audit_decision_story(audit_id: str):
+    """Deterministic officer-facing narrative derived from evaluated graph paths."""
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return engine.decision_story()
+
+
+@app.get("/api/v3/audits/{audit_id}/critical-evidence")
+async def audit_critical_evidence(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return {"audit_id": audit_id, "method": "deterministic single-evidence removal approximation", "critical_evidence": engine.critical_evidence()}
+
+
+@app.get("/api/v3/audits/{audit_id}/replay")
+async def audit_replay(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    return engine.replay()
+
+
+@app.get("/api/v3/audits/{audit_id}/integrity")
+async def audit_integrity(audit_id: str):
+    engine = current_engine()
+    if engine.audit_id != audit_id:
+        raise HTTPException(status_code=404, detail="Audit not found.")
+    valid, message = engine.verify_chain_integrity()
+    return {"audit_id": audit_id, "chain_valid": valid, "message": message, "merkle_root": engine.merkle_root(), "event_count": len(engine.ledger)}
 
 
 @app.post("/api/v3/officer-override")
@@ -529,10 +604,6 @@ class SimpleCounterfactualRequest(BaseModel):
     changes: List[CounterfactualChange] = Field(min_length=1, max_length=20)
 
 
-class SimpleCounterfactualRequest(BaseModel):
-    changes: List[CounterfactualChange]
-
-
 @app.post("/api/v3/counterfactual")
 async def counterfactual(request: SimpleCounterfactualRequest):
     hypothetical = [
@@ -546,6 +617,59 @@ async def counterfactual(request: SimpleCounterfactualRequest):
         for index, change in enumerate(request.changes, start=1)
     ]
     return current_engine().optimize_compliance_intervention(hypothetical)
+
+
+class SimulationRequest(BaseModel):
+    evidence_id: str
+    action: str = "REMOVE_EVIDENCE"
+
+
+@app.post("/api/v3/simulations")
+async def create_simulation(request: SimulationRequest):
+    if request.action != "REMOVE_EVIDENCE":
+        raise HTTPException(status_code=422, detail="Only REMOVE_EVIDENCE is currently supported deterministically.")
+    try:
+        return current_engine().simulate_evidence_removal(request.evidence_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/v3/demo/seed")
+async def seed_synthetic_demo():
+    """Load a clearly labelled, deterministic local demo without calling Gemini."""
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
+    clear_audit_session()
+    deadline = datetime(2026, 8, 15, 14, 30, tzinfo=timezone.utc)
+    engine = ProcurementIntelligenceEngine("GEMA-SYNTHETIC-DEMO", deadline)
+    evidence = [
+        EvidenceNode(node_id="E-GST-001", entity_name="gstin", extracted_value="27BETAT1234A1Z5", confidence=.96,
+                     source_doc="SYNTHETIC_GST_Certificate.pdf", page_number=2, valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                     valid_until=datetime(2026, 8, 1, tzinfo=timezone.utc), evidence_type="GST Certificate", provenance="SYNTHETIC_DEMO_DATA"),
+        EvidenceNode(node_id="E-PAN-001", entity_name="pan", extracted_value="BETAT1234A", confidence=.94,
+                     source_doc="SYNTHETIC_PAN.pdf", page_number=1, evidence_type="PAN", provenance="SYNTHETIC_DEMO_DATA"),
+        EvidenceNode(node_id="E-TURNOVER-001", entity_name="turnover", extracted_value=40000000, confidence=.95,
+                     source_doc="SYNTHETIC_Turnover.pdf", page_number=1, evidence_type="Turnover Certificate", provenance="SYNTHETIC_DEMO_DATA"),
+    ]
+    rules = [
+        RuleNode(rule_id="R-GST", clause_text="GST registration must be valid at evaluation time", ast=ASTNode(op="EXISTS", field="gstin"), weight=40, is_mandatory=True, requires_temporal_validity=True, tender_id="SYNTHETIC-T-001", tender_version="V3"),
+        RuleNode(rule_id="R-PAN", clause_text="PAN document must exist", ast=ASTNode(op="EXISTS", field="pan"), weight=30, is_mandatory=True, tender_id="SYNTHETIC-T-001", tender_version="V3"),
+        RuleNode(rule_id="R-TURNOVER", clause_text="Average annual turnover must be at least ₹3 Crore", ast=ASTNode(op=">=", field="turnover", value=30000000), weight=30, is_mandatory=False, tender_id="SYNTHETIC-T-001", tender_version="V3"),
+    ]
+    for item in evidence:
+        engine.register_evidence(item)
+    for item in rules:
+        engine.register_rule(item)
+    engine.rebuild_dependencies()
+    engine.evaluate_all_rules()
+    engine._append_to_ledger("SYNTHETIC_DEMO_SEEDED", "SYSTEM", {"notice": "SYNTHETIC DEMO DATA — not a government verification"})
+    engines["BIDDER-DEMO"] = engine
+    bidder_labels["BIDDER-DEMO"] = "Beta Tech Solutions Pvt Ltd (Synthetic)"
+    active_bidder_id = "BIDDER-DEMO"
+    current_tender_rules = [rule.model_copy(deep=True) for rule in rules]
+    current_tender_deadline = deadline
+    current_tender_filename = "SYNTHETIC_TENDER_V3.pdf"
+    current_tender_department = "Synthetic Demonstration Authority"
+    return {"message": "Synthetic demo audit loaded.", "synthetic": True, "bidder_id": "BIDDER-DEMO", "audit_id": engine.audit_id, "decision": engine.calculate_overall_compliance().model_dump(mode="json")}
 
 
 def _coerce(raw: str) -> Any:

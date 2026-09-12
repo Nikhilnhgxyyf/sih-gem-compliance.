@@ -502,6 +502,7 @@ EVIDENCE GRAPH
 ========================================================= */
 
 let evidenceNetwork = null;
+let decisionStory = null;
 
 const EVIDENCE_STATUS_COLOR = {
     VERIFIED: "#16a34a",
@@ -694,6 +695,65 @@ $("nodeDetailsContent").innerHTML = `
 `;
 
 };
+
+function highlightDecisionDependency(evidenceId) {
+    if (!decisionStory) return;
+    const evidence = decisionStory.evidence.find(item => item.evidence_id === evidenceId);
+    const selected = [evidenceId, ...(evidence?.dependent_rule_ids || [])]
+        .filter(id => state.evidence.some(node => node.node_id === id) || state.rules.some(rule => rule.rule_id === id));
+    if (evidenceNetwork && selected.length) {
+        evidenceNetwork.selectNodes(selected, false);
+        evidenceNetwork.focus(evidenceId, { scale: 1.35, animation: { duration: 350 } });
+    }
+    selectEvidence(evidenceId);
+}
+
+function renderDecisionStory(story, skeletonOnly = false) {
+    const content = $("decisionStoryContent");
+    if (skeletonOnly) {
+        const evidenceRows = story.evidence.map(item => `
+            <button class="skeleton-evidence ${item.critical ? "critical" : ""}" onclick="highlightDecisionDependency('${escapeJs(item.evidence_id)}')">
+                ${escapeHtml(item.evidence_id)} <small>→ ${escapeHtml(item.dependent_rule_ids.join(", ") || "no rule")}</small>
+            </button>`).join("");
+        content.innerHTML = `
+            <div class="decision-skeleton" aria-label="Decision dependency skeleton">
+                <div class="skeleton-level decision">DECISION: ${escapeHtml(story.decision.decision)}</div>
+                <div class="skeleton-arrow">↑</div>
+                <div class="skeleton-level">RULES: ${story.rules.map(rule => escapeHtml(rule.rule_id)).join(" · ") || "none"}</div>
+                <div class="skeleton-arrow">↑</div>
+                <div class="skeleton-level">CLAIMS: ${story.evidence.map(item => escapeHtml(item.evidence_id)).join(" · ") || "none"}</div>
+                <div class="skeleton-arrow">↑</div>
+                <div class="skeleton-level evidence-list">EVIDENCE: ${evidenceRows || "none"}</div>
+                <div class="skeleton-arrow">↑</div>
+                <div class="skeleton-level">DOCUMENTS: ${story.evidence.map(item => escapeHtml(item.source_document)).join(" · ") || "none"}</div>
+            </div>
+            <p class="story-note">Click evidence to focus its deterministic downstream dependencies in the graph.</p>`;
+        return;
+    }
+    const evidence = story.evidence.map(item => `<li><strong>${escapeHtml(item.evidence_id)}</strong> — ${escapeHtml(item.temporal_state)}; rules: ${escapeHtml(item.dependent_rule_ids.join(", ") || "none")}${item.critical ? " <b>DECISION-CRITICAL</b>" : ""}</li>`).join("");
+    const rules = story.rules.map(item => `<li><strong>${escapeHtml(item.rule_id)}: ${escapeHtml(item.status)}</strong> — ${escapeHtml(item.reason)} (evidence: ${escapeHtml(item.evidence_ids.join(", ") || "none")})</li>`).join("");
+    content.innerHTML = `
+        <p class="story-lede">${escapeHtml(story.explanation)}</p>
+        <div class="story-columns"><div><span class="eyebrow">EVIDENCE THAT EXISTED / MATTERED</span><ul>${evidence}</ul></div>
+        <div><span class="eyebrow">RULES AND DECISION PATHS</span><ul>${rules}</ul></div></div>
+        <div class="story-paths"><strong>Decision paths:</strong> ${story.decision_paths.map(path => escapeHtml(path.join(" → "))).join("<br>") || "No graph path available."}</div>
+        <div class="story-changes"><strong>What would alter the decision:</strong> ${story.what_changes_decision.length ? story.what_changes_decision.map(escapeHtml).join(" ") : "No single-evidence decision change detected."}</div>`;
+}
+
+async function loadDecisionStory(skeletonOnly = false) {
+    if (!state.auditId || !state.evidence.length) {
+        toast("Load an audit before requesting its decision story.");
+        return;
+    }
+    try {
+        decisionStory = await api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/decision-story`);
+        renderDecisionStory(decisionStory, skeletonOnly);
+    } catch (error) {
+        toast(`Could not build decision story: ${error.message}`);
+    }
+}
+
+window.highlightDecisionDependency = highlightDecisionDependency;
 
 /* =========================================================
 OFFICER ACTIONS — corrections + review resolution
@@ -1698,6 +1758,20 @@ loadBackendState
 );
 
 $("resetSessionButton").addEventListener("click", resetAuditSession);
+
+$("loadDemoButton").addEventListener("click", async () => {
+    try {
+        const result = await api("/api/v3/demo/seed", { method: "POST" });
+        await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
+        document.querySelector('[data-section="overview"]').click();
+        toast(`${result.message} Results are clearly marked synthetic.`);
+    } catch (error) {
+        toast(`Could not load synthetic demo: ${error.message}`);
+    }
+});
+
+$("showWhyButton").addEventListener("click", () => loadDecisionStory(false));
+$("showSkeletonButton").addEventListener("click", () => loadDecisionStory(true));
 
 /* =========================================================
 UTILITIES
