@@ -654,8 +654,13 @@ $("nodeDetailsContent").innerHTML = `
     </div>
 
     <div class="detail-row">
-        <label>VALID UNTIL</label>
-        <strong>${node.valid_until || "No expiry specified"}</strong>
+        <label>TEMPORAL VALIDITY</label>
+        <strong>Valid from ${node.valid_from ? escapeHtml(formatDate(node.valid_from)) : "not specified"} until ${node.valid_until ? escapeHtml(formatDate(node.valid_until)) : "not specified"}</strong>
+    </div>
+
+    <div class="detail-row">
+        <label>TENDER DEADLINE</label>
+        <strong>${escapeHtml($("deadline").textContent || "Not available")} — verify temporal state in Overview</strong>
     </div>
 
     ${node.source_quote ? `
@@ -1622,6 +1627,7 @@ try {
     if (graph.tender_deadline) $("deadline").textContent = formatDate(graph.tender_deadline);
 
     renderEverything();
+    loadTrustCenter();
 
     toast("Audit state synchronized.");
 
@@ -1634,6 +1640,56 @@ try {
     );
 
     loadDemoState();
+}
+
+async function loadTrustCenter() {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return;
+    try {
+        const [replay, timeline, critical] = await Promise.all([
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/replay`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/timeline`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/critical-evidence`)
+        ]);
+        renderReplay(replay);
+        renderTemporalTimeline(timeline.timeline || []);
+        renderCriticalEvidence(critical.critical_evidence || []);
+    } catch (error) {
+        console.warn("Trust center unavailable.", error);
+    }
+}
+
+function renderReplay(result) {
+    const status = $("replayStatus");
+    const verified = result.replay_status === "REPLAY VERIFIED";
+    status.textContent = result.replay_status || "REPLAY MISMATCH";
+    status.className = `replay-status ${verified ? "verified" : "mismatch"}`;
+    const original = result.original_decision || result.stored_decision || {};
+    const replayed = result.replayed_decision || {};
+    $("replayResult").innerHTML = `
+        <div class="replay-comparison">
+            <div><span>ORIGINAL</span><strong>${escapeHtml(original.decision || "—")} · ${Number(result.original_score ?? original.compliance_score ?? 0).toFixed(2)}</strong></div>
+            <div><span>REPLAYED</span><strong>${escapeHtml(replayed.decision || "—")} · ${Number(result.replayed_score ?? replayed.compliance_score ?? 0).toFixed(2)}</strong></div>
+        </div>
+        <div class="integrity-line"><strong>${result.integrity?.chain_valid ? "INTEGRITY VERIFIED" : "INTEGRITY ISSUE"}</strong> — ${escapeHtml(result.integrity?.message || "No integrity result")}</div>
+        ${result.differences?.length ? `<small>${escapeHtml(result.differences.join("; "))}</small>` : ""}`;
+}
+
+function renderTemporalTimeline(rows) {
+    $("temporalTimeline").innerHTML = rows.length ? rows.map(row => `
+        <div class="temporal-item">
+            <div><strong>${escapeHtml(row.evidence_id)} · ${escapeHtml(row.entity_name)}</strong><small>${escapeHtml(row.explanation)}</small></div>
+            <span class="temporal-status ${escapeHtml(row.display_status)}">${escapeHtml(row.display_status)}</span>
+            <div class="temporal-dates">Document date: ${escapeHtml(row.document_date ? formatDate(row.document_date) : "Not available")} · Validity: ${escapeHtml(row.validity_window?.from ? formatDate(row.validity_window.from) : "Not specified")} — ${escapeHtml(row.validity_window?.until ? formatDate(row.validity_window.until) : "Not specified")} · Tender deadline: ${escapeHtml(formatDate(row.tender_deadline))}</div>
+        </div>`).join("") : '<div class="empty-state">No temporal evidence state loaded.</div>';
+}
+
+function renderCriticalEvidence(rows) {
+    $("criticalEvidence").innerHTML = rows.length ? rows.map(row => `
+        <div class="critical-row">
+            <div><strong>${escapeHtml(row.evidence_id)}</strong><small>${escapeHtml(row.method || "HEURISTIC")}</small></div>
+            <div class="critical-metrics"><span>${row.affected_rule_count} rule(s)</span><span>${Number(row.weighted_rule_impact_pct || 0).toFixed(1)}% weighted impact</span><span>Score Δ ${Number(row.score_delta || 0).toFixed(2)}</span><span>${escapeHtml(row.temporal_importance || "LOW")} temporal importance</span><span>${Math.round(Number(row.confidence || 0) * 100)}% confidence</span></div>
+            <span class="impact-label-badge ${escapeHtml(row.impact_label)}">${escapeHtml(row.impact_label)}</span>
+        </div>`).join("") : '<div class="empty-state">No evidence ranked yet.</div>';
 }
 
 }

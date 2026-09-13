@@ -392,6 +392,27 @@
 
         </div>
 
+        <div class="trust-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <div><span class="eyebrow">REPRODUCIBLE AUDIT</span><h2>Replay &amp; Integrity</h2></div>
+                    <span id="replayStatus" class="replay-status">NOT RUN</span>
+                </div>
+                <div id="replayResult" class="empty-state">Load an audit to verify the recorded decision against a deterministic replay.</div>
+            </div>
+            <div class="panel">
+                <span class="eyebrow">TEMPORAL INTELLIGENCE</span>
+                <h2>Evidence at Tender Deadline</h2>
+                <div id="temporalTimeline" class="temporal-timeline"><div class="empty-state">No temporal evidence state loaded.</div></div>
+            </div>
+        </div>
+
+        <div class="panel critical-panel">
+            <div class="panel-header"><div><span class="eyebrow">CRITICAL EVIDENCE RANKING</span><h2>Single-Evidence Removal Impact</h2></div><span class="heuristic-badge">HEURISTIC · ISOLATED SIMULATION</span></div>
+            <p class="panel-note">Each row removes one evidence node in a deep-copied audit. The live audit and ledger are never changed.</p>
+            <div id="criticalEvidence" class="critical-evidence"><div class="empty-state">No evidence ranked yet.</div></div>
+        </div>
+
     </section>
 
 
