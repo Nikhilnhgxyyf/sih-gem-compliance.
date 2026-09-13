@@ -11,6 +11,8 @@ from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
 from demo_fixtures import try_fixture_extraction
+from tender_rigging_engine import evaluate_tender_restrictiveness
+from rti_generator import generate_rti_legal_brief
 
 app = FastAPI(
     title="GeM AI Auditor V3",
@@ -44,6 +46,7 @@ app.add_middleware(
 
 DEFAULT_TENDER_DEADLINE = datetime(2026, 8, 30, tzinfo=timezone.utc)
 MAX_FILE_SIZE_MB = 15
+DEMO_TENDER_ID = "GEM/2026/B/8847213"
 
 # One engine per bidder, so a tender can be evaluated against several
 # bidders at once instead of each upload wiping out the last one.
@@ -392,6 +395,31 @@ async def bidder_report(bidder_id: str):
         "latest_hash": eng.ledger[-1].event_hash if eng.ledger else None,
         "rule_reports": rule_reports,
     }
+
+
+@app.get("/api/v3/tender/restrictiveness")
+async def tender_restrictiveness():
+    """Stress-test the active tender locally against the fixed vendor market."""
+    if not current_tender_rules:
+        raise HTTPException(status_code=409, detail="Upload a tender before running the pre-publish stress test.")
+    return {
+        "tender_id": DEMO_TENDER_ID,
+        "department": current_tender_department,
+        **evaluate_tender_restrictiveness(current_tender_rules),
+    }
+
+
+@app.get("/api/v3/bidders/{bidder_id}/rti-brief")
+async def rti_legal_brief(bidder_id: str):
+    if bidder_id not in engines or bidder_id == "EMPTY":
+        raise HTTPException(status_code=404, detail=f"Bidder '{bidder_id}' not found.")
+    engine = engines[bidder_id]
+    decision = engine.calculate_overall_compliance()
+    if decision.decision != "FAIL":
+        raise HTTPException(status_code=409, detail="An RTI rejection brief is only available for rejected bidders.")
+    brief = generate_rti_legal_brief(bidder_id, DEMO_TENDER_ID, engine, engine.ledger[-1].event_hash)
+    brief["bidder_name"] = bidder_labels.get(bidder_id, bidder_id)
+    return brief
 
 
 @app.get("/api/v3/bidders")

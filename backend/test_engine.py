@@ -6,6 +6,8 @@ from fastapi import HTTPException
 
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus
+from tender_rigging_engine import evaluate_tender_restrictiveness
+from rti_generator import generate_rti_legal_brief
 
 
 class EngineTestCase(unittest.TestCase):
@@ -181,6 +183,27 @@ class EngineTestCase(unittest.TestCase):
         )
         with self.assertRaises(HTTPException):
             main.normalize_tender_department("x" * 201)
+
+    def test_pre_publish_restrictiveness_uses_fixed_thousand_vendor_market(self):
+        rules = [
+            RuleNode(rule_id="R001", clause_text="Turnover", ast=ASTNode(op=">=", field="turnover", value=1_000_000_000)),
+            RuleNode(rule_id="R002", clause_text="Projects", ast=ASTNode(op=">=", field="qualifying_project_count", value=3)),
+            RuleNode(rule_id="R003", clause_text="PAN", ast=ASTNode(op="EXISTS", field="pan")),
+            RuleNode(rule_id="R004", clause_text="GST", ast=ASTNode(op="EXISTS", field="gstin")),
+        ]
+        result = evaluate_tender_restrictiveness(rules)
+        self.assertEqual(result["total_market_vendors"], 1000)
+        self.assertEqual(result["eligible_vendors_count"], 5)
+        self.assertEqual(result["restrictiveness_score"], 99.5)
+
+    def test_rti_brief_contains_failed_deterministic_clause_and_ledger_proof(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E001", "turnover", 80))
+        engine.register_rule(RuleNode(rule_id="R001", clause_text="Turnover threshold", ast=ASTNode(op=">=", field="turnover", value=100)))
+        engine.evaluate_all_rules()
+        brief = generate_rti_legal_brief("BIDDER-2", "GEM/2026/B/8847213", engine, engine.ledger[-1].event_hash)
+        self.assertEqual(brief["violations"][0]["ast_result"], "FAIL (Logical False)")
+        self.assertEqual(brief["cryptographic_audit_footprint"]["genesis_block_reference"], engine.ledger[0].event_hash)
 
 
 if __name__ == "__main__":

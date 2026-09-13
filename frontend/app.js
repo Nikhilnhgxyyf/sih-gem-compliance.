@@ -88,6 +88,9 @@ button.addEventListener("click", () => {
     if (target === "bidders") {
         loadBidderComparison();
     }
+    if (target === "vigilance") {
+        loadTenderVigilance();
+    }
 
 });
 
@@ -1497,6 +1500,7 @@ function renderBidderTable(bidders) {
             </div>
             <span class="status-pill ${escapeHtml(b.decision)}">${escapeHtml(b.decision)}</span>
             <strong class="bidder-score">${b.compliance_score.toFixed(1)}</strong>
+            ${b.decision === "FAIL" ? `<button class="text-button rti-button" onclick="openRtiBrief('${escapeJs(b.bidder_id)}')">📄 RTI Defense Brief</button>` : ""}
             <button class="text-button" onclick="activateBidder('${escapeJs(b.bidder_id)}')">
                 ${b.is_active ? "Viewing" : "View"}
             </button>
@@ -1505,6 +1509,43 @@ function renderBidderTable(bidders) {
 
     container.innerHTML = `<div class="bidder-list">${rows}</div>`;
 }
+
+async function loadTenderVigilance() {
+    const panel = $("vigilancePanel");
+    try {
+        const result = await api("/api/v3/tender/restrictiveness");
+        const locked = panel.dataset.locked === "true";
+        panel.innerHTML = `
+            <div class="vigilance-alert ${result.restrictiveness_score > 90 ? "critical" : ""}">
+                <span class="eyebrow">MARKET ELIMINATION RATE</span>
+                <strong>${Number(result.restrictiveness_score).toFixed(1)}%</strong>
+                <p>⚠️ Potential Specification Rigging Detected: Only ${Number(result.eligible_percentage).toFixed(1)}% of registered GeM contractors qualify for this draft tender.</p>
+            </div>
+            <div class="vigilance-stats"><div><strong>${result.total_market_vendors}</strong><span>Market vendors</span></div><div><strong>${result.eligible_vendors_count}</strong><span>Eligible vendors</span></div><div><strong>${escapeHtml(result.risk_level)}</strong><span>Risk level</span></div></div>
+            <h3>Clause elimination analysis</h3>
+            <div class="elimination-list">${result.clause_elimination_breakdown.map(item => `<div><strong>${escapeHtml(item.clause)}</strong><span>${item.disqualified} vendors disqualified</span><small>${escapeHtml(item.note)}</small></div>`).join("")}</div>
+            <button id="lockTenderButton" class="reset-button" type="button" ${locked ? "disabled" : ""}>${locked ? "🔒 Locked for Senior Review" : "🔒 Lock Tender for Senior Review"}</button>
+            ${locked ? `<p class="lock-hash">Senior-review lock hash: ${escapeHtml(panel.dataset.lockHash)}</p>` : ""}
+        `;
+        $("lockTenderButton").addEventListener("click", () => {
+            panel.dataset.locked = "true";
+            panel.dataset.lockHash = `VIG-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+            loadTenderVigilance();
+        });
+    } catch (error) {
+        panel.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+window.openRtiBrief = async function (bidderId) {
+    try {
+        const brief = await api(`/api/v3/bidders/${encodeURIComponent(bidderId)}/rti-brief`);
+        $("rtiBriefContent").innerHTML = `<h2 id="rtiModalTitle">${escapeHtml(brief.title)}</h2><p><strong>Reference:</strong> ${escapeHtml(brief.reference_number)}<br><strong>Tender:</strong> ${escapeHtml(brief.tender_id)}<br><strong>Bidder:</strong> ${escapeHtml(brief.bidder_name)}<br><strong>Disqualification time:</strong> ${escapeHtml(formatDate(brief.disqualification_timestamp))}</p><h3>Deterministic violations</h3><table class="matrix-table"><thead><tr><th>Clause</th><th>Claimed value</th><th>Required</th><th>Result</th></tr></thead><tbody>${brief.violations.map(v => `<tr><td>${escapeHtml(v.clause)}<br><small>${escapeHtml(v.requirement)}</small></td><td>${escapeHtml(String(v.claimed_value))}</td><td>${escapeHtml(String(v.mandated_threshold))}</td><td>${escapeHtml(v.ast_result)}</td></tr>`).join("")}</tbody></table><div class="audit-footprint"><strong>Cryptographic Audit Footprint</strong><small>Ledger hash: ${escapeHtml(brief.cryptographic_audit_footprint.ledger_hash || "—")}</small><small>Genesis block: ${escapeHtml(brief.cryptographic_audit_footprint.genesis_block_reference || "—")}</small></div>`;
+        $("rtiModal").classList.remove("hidden");
+    } catch (error) { toast(`Could not generate RTI brief: ${error.message}`); }
+};
+
+window.closeRtiBrief = function () { $("rtiModal").classList.add("hidden"); };
 
 window.activateBidder = async function (bidderId) {
 
