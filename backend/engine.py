@@ -1484,22 +1484,39 @@ class ProcurementIntelligenceEngine:
         }
 
     def critical_evidence(self) -> List[dict]:
-        """Single-removal approximation, deliberately not presented as an exact minimum cut."""
+        """Rank isolated-removal effects; this is a heuristic, not a minimum cut."""
         self.evaluate_all_rules()
         results = []
+        total_weight = sum(rule.weight for rule in self.rule_nodes.values())
         for evidence_id in sorted(self.evidence_nodes):
             impact = self.simulate_evidence_removal(evidence_id)
             radius = self.analyze_blast_radius(evidence_id)
             decision_impact = impact["decision_changed"]
             score_loss = max(0, -impact["score_delta"])
             mandatory = radius["mandatory_rules_affected"]
+            weighted_impact = (sum(self.rule_nodes[rule_id].weight for rule_id in radius["affected_rules"])
+                               / total_weight * 100) if total_weight else 0
+            node = self.evidence_nodes[evidence_id]
+            temporal_state = self.temporal_state(node)
+            temporal_importance = ("HIGH" if temporal_state != TemporalState.VALID_AT_TIME
+                                   else "MEDIUM" if node.valid_from or node.valid_until else "LOW")
             criticality = round(min(100, score_loss + mandatory * 25 + (40 if decision_impact else 0)), 2)
+            label = ("DECISION-CRITICAL" if decision_impact else
+                     "SUPPORTING" if radius["affected_rules"] else "LOW IMPACT")
             results.append({"evidence_id": evidence_id, "criticality_score": criticality,
                             "decision_impact": decision_impact, "affected_rule_count": len(radius["affected_rules"]),
                             "affected_path_count": len(radius["propagation_edges"]),
                             "single_point_of_failure": decision_impact and mandatory > 0,
                             "dependency_count": len(radius["affected_rules"]),
-                            "mandatory_dependency_count": mandatory})
+                            "mandatory_dependency_count": mandatory,
+                            "weighted_rule_impact_pct": round(weighted_impact, 1),
+                            "score_delta": impact["score_delta"],
+                            "removal_changes_final_decision": decision_impact,
+                            "temporal_importance": temporal_importance,
+                            "temporal_state": temporal_state.value,
+                            "confidence": round(node.confidence, 2),
+                            "impact_label": label,
+                            "method": "HEURISTIC: isolated single-evidence removal"})
         return sorted(results, key=lambda item: (-item["criticality_score"], item["evidence_id"]))
 
     def replay(self) -> dict:
@@ -1511,17 +1528,41 @@ class ProcurementIntelligenceEngine:
             differences.append("Rule engine version changed")
         if stored["decision_fingerprint"] != reconstructed["decision_fingerprint"]:
             differences.append("Decision state fingerprint differs")
+        chain_valid, chain_message = self.verify_chain_integrity()
+        match = not differences
         return {"audit_id": self.audit_id, "stored_decision": stored["decision"],
-                "replayed_decision": reconstructed["decision"], "match": not differences,
+                "original_decision": stored["decision"],
+                "replayed_decision": reconstructed["decision"],
+                "original_score": stored["decision"]["compliance_score"],
+                "replayed_score": reconstructed["decision"]["compliance_score"],
+                "match": match, "replay_status": "REPLAY VERIFIED" if match else "REPLAY MISMATCH",
+                "integrity": {"chain_valid": chain_valid, "message": chain_message},
                 "differences": differences, "stored_decision_dna": stored,
-                "replayed_decision_dna": reconstructed}
+                "original_decision_dna": stored, "replayed_decision_dna": reconstructed}
 
     def timeline(self) -> List[dict]:
-        return [{"evidence_id": eid, "entity_name": node.entity_name,
-                 "effective_from": node.valid_from.isoformat() if node.valid_from else None,
-                 "effective_until": node.valid_until.isoformat() if node.valid_until else None,
-                 "evaluation_timestamp": self.evaluation_timestamp.isoformat(),
-                 "state": self.temporal_state(node).value} for eid, node in sorted(self.evidence_nodes.items())]
+        display = {
+            TemporalState.VALID_AT_TIME: ("VALID", "Valid at tender deadline"),
+            TemporalState.EXPIRED_AT_TIME: ("EXPIRED", "EXPIRED AT TENDER DEADLINE"),
+            TemporalState.NOT_YET_VALID: ("NOT-YET-VALID", "NOT YET VALID AT TENDER DEADLINE"),
+            TemporalState.UNKNOWN_VALIDITY: ("UNKNOWN", "VALIDITY WINDOW NOT AVAILABLE"),
+            TemporalState.CONFLICTING_AT_TIME: ("CONFLICTING", "CONFLICTING EVIDENCE AT TENDER DEADLINE"),
+        }
+        rows = []
+        for eid, node in sorted(self.evidence_nodes.items()):
+            state = self.temporal_state(node)
+            status, explanation = display[state]
+            rows.append({"evidence_id": eid, "entity_name": node.entity_name,
+                         "document_date": (node.issue_date or node.source_timestamp or node.extraction_timestamp).isoformat()
+                         if (node.issue_date or node.source_timestamp or node.extraction_timestamp) else None,
+                         "effective_from": node.valid_from.isoformat() if node.valid_from else None,
+                         "effective_until": node.valid_until.isoformat() if node.valid_until else None,
+                         "validity_window": {"from": node.valid_from.isoformat() if node.valid_from else None,
+                                             "until": node.valid_until.isoformat() if node.valid_until else None},
+                         "tender_deadline": self.tender_deadline.isoformat(),
+                         "evaluation_timestamp": self.evaluation_timestamp.isoformat(),
+                         "state": state.value, "display_status": status, "explanation": explanation})
+        return rows
 
     # ========================================================
     # TRUE INCREMENTAL PROPAGATION
