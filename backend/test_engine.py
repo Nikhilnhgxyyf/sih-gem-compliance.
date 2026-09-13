@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import os
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -264,6 +265,9 @@ class EngineTestCase(unittest.TestCase):
         engine.rebuild_dependencies()
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteAuditStore(f"{directory}/audit.db")
+            self.assertTrue(os.path.exists(f"{directory}/audit.db"))
+            with store._connect() as connection:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SQLiteAuditStore.SCHEMA_VERSION)
             store.save_engine(engine, "B-1", "Bidder One", "T-1", "V1")
             restored = store.load_engine("test-audit")
             self.assertIsNotNone(restored)

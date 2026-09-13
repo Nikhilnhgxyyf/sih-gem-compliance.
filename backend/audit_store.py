@@ -12,6 +12,7 @@ from schemas import AuditEvent, EvidenceNode, RuleEvaluation, RuleNode
 
 class SQLiteAuditStore:
     """Small, deterministic persistence adapter suitable for the prototype."""
+    SCHEMA_VERSION = 1
 
     def __init__(self, database_path: Optional[str] = None):
         configured = database_path or os.environ.get("AUDIT_DB_PATH")
@@ -62,6 +63,11 @@ class SQLiteAuditStore:
                     saved_at TEXT NOT NULL
                 );
             """)
+            # Lightweight, forward-compatible schema marker. Existing databases
+            # remain usable because every base table is created idempotently.
+            current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if current_version < self.SCHEMA_VERSION:
+                connection.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     @staticmethod
     def _dump(value: Any) -> str:

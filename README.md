@@ -80,4 +80,8 @@ AI extraction is optional and degraded-mode failures do not replace deterministi
 
 ## Persistent Decision Capsules
 
-Audit state is persisted through the lightweight SQLite adapter (`AUDIT_DB_PATH`, default `backend/data/gem_audit.db`). The deterministic engine remains the decision authority; SQLite records sessions, evidence, rules, evaluations, decisions, ledger events, simulations, and portable Decision Capsules. A capsule can be saved, exported, imported, replayed, and integrity-verified without describing its SHA-256 fingerprint as encryption or legal proof.
+Audit state is persisted through the lightweight SQLite adapter (`AUDIT_DB_PATH`, default `backend/data/gem_audit.db`). The directory and database file are created automatically at startup and the schema is initialized idempotently, so an empty writable deployment starts without manual setup. The deterministic engine remains the decision authority; SQLite records sessions, evidence, rules, evaluations, decisions, ledger events, simulations, and portable Decision Capsules. A capsule can be saved, exported, imported, replayed, and integrity-verified without describing its SHA-256 fingerprint as encryption or legal proof.
+
+### Render persistence note
+
+On a standard Render service, the local filesystem may be ephemeral across redeploys or instance replacement. Set `AUDIT_DB_PATH` to a writable mounted persistent-disk path if audit history must survive those events. The default SQLite configuration is suitable for this prototype and demonstration workflow; it is **not** presented as enterprise-grade durable storage.

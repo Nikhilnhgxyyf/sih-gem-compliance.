@@ -19,6 +19,13 @@ function showLoading(show = true) {
 $("loadingBar").classList.toggle("hidden", !show);
 }
 
+function setOperationStatus(message, kind = "loading") {
+    const status = $("operationStatus");
+    status.textContent = message;
+    status.className = `operation-status ${kind}`;
+    if (kind !== "loading") setTimeout(() => status.classList.add("hidden"), 3500);
+}
+
 function toast(message) {
 $("toastMessage").textContent = message;
 $("toast").classList.add("show");
@@ -32,6 +39,7 @@ setTimeout(() => {
 async function api(path, options = {}) {
 
 showLoading(true);
+setOperationStatus(options.statusMessage || "Working on audit data…", "loading");
 
 try {
 
@@ -57,7 +65,13 @@ try {
         throw new Error(detail);
     }
 
-    return await response.json();
+    const payload = await response.json();
+    setOperationStatus(options.successMessage || "Audit operation completed.", "success");
+    return payload;
+
+} catch (error) {
+    setOperationStatus("Unable to complete the audit operation. Please try again.", "error");
+    throw error;
 
 } finally {
     showLoading(false);
@@ -213,7 +227,9 @@ $("ingestButton").addEventListener("click", async () => {
 
         const result = await api("/api/v3/ingest-documents", {
             method: "POST",
-            body: formData
+            body: formData,
+            statusMessage: "Extracting evidence and running deterministic evaluation…",
+            successMessage: "Evidence ingested and deterministic evaluation completed."
         });
 
         summaryBox.innerHTML = `
@@ -1899,7 +1915,7 @@ $("resetSessionButton").addEventListener("click", resetAuditSession);
 
 $("loadDemoButton").addEventListener("click", async () => {
     try {
-        const result = await api("/api/v3/demo/seed", { method: "POST" });
+        const result = await api("/api/v3/demo/seed", { method: "POST", statusMessage: "Loading deterministic synthetic demo audit…", successMessage: "Synthetic demo audit loaded." });
         await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
         $("syntheticBanner").classList.remove("hidden");
         document.querySelector('[data-section="overview"]').click();
@@ -1919,7 +1935,7 @@ async function capsuleAction(action) {
     if (!state.auditId || state.auditId === "GEMA-SIH-001") return toast("Load an audit first.");
     try {
         const endpoint = action === "save" ? `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/save` : `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/${action}`;
-        const result = await api(endpoint, { method: action === "export" ? "GET" : "POST" });
+        const result = await api(endpoint, { method: action === "export" ? "GET" : "POST", statusMessage: `${action === "save" ? "Saving" : action === "replay" ? "Replaying" : action === "verify" ? "Verifying" : "Exporting"} decision capsule…`, successMessage: "Decision capsule operation completed." });
         $("capsuleResult").textContent = action === "export" ? "Capsule export is ready in the response payload." : `${action.toUpperCase()} completed: ${result.status || result.capsule_integrity?.status || "verified"}.`;
         $("capsuleResult").classList.remove("empty-state");
     } catch (error) { toast(`Capsule ${action} failed: ${error.message}`); }
