@@ -111,6 +111,7 @@ class EngineTestCase(unittest.TestCase):
         import main
 
         main.engines.clear()
+        main.audit_store.deactivate_all()
         main.active_bidder_id = None
         client = TestClient(main.app)
         payload = {

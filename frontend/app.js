@@ -402,6 +402,41 @@ if (decision === "PASS") {
         "Evidence or rule dependencies require officer review.";
 }
 
+function renderDashboardDetails() {
+    const evaluation = state.evaluation || {};
+    $("headerAuditId").textContent = state.auditId;
+    $("headerDecision").textContent = decisionLabel(evaluation.decision);
+    const timestamps = Object.values(state.ruleEvaluations || {}).map(item => item.evaluated_at).filter(Boolean);
+    $("lastEvaluated").textContent = timestamps.length ? formatDate(timestamps[0]) : "Not evaluated";
+    $("headerIntegrity").textContent = state.integrity?.chain_valid ? "Verified" : "Pending";
+
+    const findings = [];
+    const orderedRules = [...state.rules].sort((left, right) => {
+        const rank = { FAIL: 0, REVIEW: 1, PASS: 2 };
+        return (rank[state.ruleStatuses?.[left.rule_id]] ?? 1) - (rank[state.ruleStatuses?.[right.rule_id]] ?? 1);
+    });
+    for (const rule of orderedRules) {
+        const status = state.ruleStatuses?.[rule.rule_id] || "REVIEW";
+        if (status !== "PASS" || findings.length < 2) findings.push({ status, rule });
+        if (findings.length >= 4) break;
+    }
+    $("keyFindings").innerHTML = findings.length ? findings.map(({ status, rule }) => `
+        <div class="finding-item"><span class="finding-mark ${status}">${status === "PASS" ? "✓" : status === "FAIL" ? "×" : "!"}</span><div><strong>${escapeHtml(rule.rule_id)}</strong><br><span>${escapeHtml(rule.clause_text)}</span></div></div>`).join("") : '<div class="empty-state">Findings will appear after evaluation.</div>';
+
+    const statuses = ["VERIFIED", "UNVERIFIED", "EXPIRED", "CONFLICTING", "REJECTED"];
+    const counts = Object.fromEntries(statuses.map(status => [status, 0]));
+    state.evidence.forEach(node => { counts[node.status] = (counts[node.status] || 0) + 1; });
+    $("evidenceHealthTotal").textContent = `${state.evidence.length} total`;
+    $("evidenceHealth").innerHTML = state.evidence.length ? statuses.map(status => `<div class="health-item"><strong>${counts[status]}</strong><span>${status}</span></div>`).join("") : '<div class="empty-state">No evidence loaded.</div>';
+}
+
+function decisionLabel(decision) {
+    if (decision === "PASS") return "Compliant";
+    if (decision === "FAIL") return "Non-compliant";
+    return decision === "REVIEW" ? "Review required" : "Awaiting evaluation";
+}
+
+renderDashboardDetails();
 
 /* Score Ring */
 
@@ -536,36 +571,24 @@ if (evidenceNetwork) {
     evidenceNetwork = null;
 }
 
-const nodes = new vis.DataSet([
-    ...state.evidence.map(n => ({
-        id: n.node_id,
-        label: `${n.node_id}\n${n.entity_name}`,
-        shape: "dot",
-        size: 14,
-        color: EVIDENCE_STATUS_COLOR[n.status] || "#94a3b8",
-        font: { size: 10, face: "JetBrains Mono", color: "#334155" }
-    })),
-    ...state.rules.map(r => ({
-        id: r.rule_id,
-        label: r.rule_id,
-        shape: "box",
-        color: RULE_STATUS_COLOR[state.ruleStatuses?.[r.rule_id]] || "#94a3b8",
-        font: { size: 10, face: "JetBrains Mono", color: "#ffffff" }
-    }))
-]);
-
-const edges = new vis.DataSet(
-    state.edges.map(e => ({
-        from: e.source_id,
-        to: e.target_id,
-        arrows: "to",
-        dashes: e.relationship === "RULE_DEPENDENCY",
-        color: { color: e.relationship === "RULE_DEPENDENCY" ? "#2563eb" : "#cbd5e1" }
-    }))
-);
+const causal = state.causalGraph;
+const graphNodes = causal?.nodes || [
+    ...state.evidence.map(n => ({ id: n.node_id, type: "EVIDENCE", label: `${n.node_id}\n${n.entity_name}`, data: n })),
+    ...state.rules.map(r => ({ id: r.rule_id, type: "RULE", label: r.rule_id, data: r })),
+    { id: "DECISION", type: "DECISION", label: decisionLabel(state.evaluation?.decision), data: state.evaluation }
+];
+const colorForType = { DOCUMENT: "#64748b", EVIDENCE: "#2563eb", CLAIM: "#7c3aed", RULE: "#1e3a5f", RULE_EVALUATION: "#d97706", DECISION: "#059669" };
+const nodes = new vis.DataSet(graphNodes.map(node => ({
+    id: node.id, label: `${node.type}\n${String(node.label || node.id).slice(0, 48)}`, group: node.type,
+    shape: node.type === "DOCUMENT" ? "box" : node.type === "DECISION" ? "hexagon" : node.type === "EVIDENCE" ? "dot" : "box",
+    size: node.type === "EVIDENCE" ? 13 : undefined,
+    color: colorForType[node.type] || "#64748b", font: { size: 10, face: "Inter", color: "#ffffff" }
+})));
+const edges = new vis.DataSet((causal?.edges || state.edges).map(edge => ({ from: edge.source_id, to: edge.target_id, arrows: "to", color: { color: "#cbd5e1" } })));
 
 evidenceNetwork = new vis.Network(container, { nodes, edges }, {
-    physics: { stabilization: true, barnesHut: { gravitationalConstant: -3500, springLength: 100 } },
+    layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 170, nodeSpacing: 90 } },
+    physics: false,
     interaction: { hover: true, tooltipDelay: 150 },
     edges: { smooth: { type: "continuous" } }
 });
@@ -573,9 +596,10 @@ evidenceNetwork = new vis.Network(container, { nodes, edges }, {
 evidenceNetwork.on("click", (params) => {
     if (!params.nodes.length) return;
     const clicked = params.nodes[0];
-    if (state.evidence.some(n => n.node_id === clicked)) {
-        selectEvidence(clicked);
-    }
+    const clickedNode = graphNodes.find(node => node.id === clicked);
+    if (clickedNode?.type === "EVIDENCE") selectEvidence(clicked);
+    else if (clickedNode?.type === "RULE") inspectRule(clicked);
+    else if (clickedNode?.type === "DECISION") inspectDecision();
 });
 
 populateBlastSelector();
@@ -699,7 +723,42 @@ $("nodeDetailsContent").innerHTML = `
     </button>
 `;
 
+    loadEvidenceDNA(nodeId);
+
 };
+
+async function loadEvidenceDNA(nodeId) {
+    try {
+        const dna = await api(`/api/v3/evidence/${encodeURIComponent(nodeId)}/dna`);
+        const affected = dna.dependent_rule_ids?.join(", ") || "No direct rules";
+        $("nodeDetailsContent").insertAdjacentHTML("afterbegin", `
+            <div class="detail-row"><label>AFFECTED RULES</label><strong>${escapeHtml(affected)}</strong></div>
+            <details class="dna-details"><summary>Evidence DNA</summary><code>${escapeHtml(dna.evidence_fingerprint || "Not available")}</code></details>`);
+    } catch (error) { console.warn("Evidence DNA unavailable.", error); }
+}
+
+function inspectRule(ruleId) {
+    const rule = state.rules.find(item => item.rule_id === ruleId);
+    const evaluation = state.ruleEvaluations?.[ruleId] || {};
+    if (!rule) return;
+    $("selectedNodeTitle").textContent = `Rule ${rule.rule_id}`;
+    $("nodeDetailsContent").innerHTML = `
+        <div class="detail-row"><label>CLAUSE</label><strong>${escapeHtml(rule.clause_text)}</strong></div>
+        <div class="detail-row"><label>REQUIREMENT</label><strong>${rule.is_mandatory ? "MANDATORY" : "OPTIONAL"}</strong></div>
+        <div class="detail-row"><label>EVALUATION</label><span class="status-pill ${escapeHtml(evaluation.status || state.ruleStatuses?.[ruleId] || "REVIEW")}">${escapeHtml(evaluation.status || state.ruleStatuses?.[ruleId] || "REVIEW")}</span></div>
+        <div class="detail-row"><label>SUPPORTING EVIDENCE</label><strong>${escapeHtml(evaluation.evidence_ids?.join(", ") || "No resolved evidence")}</strong></div>
+        <div class="detail-row"><label>DETERMINISTIC REASONING</label><strong>${escapeHtml(evaluation.reasoning || "Not evaluated")}</strong></div>`;
+}
+
+function inspectDecision() {
+    const decision = state.evaluation || {};
+    $("selectedNodeTitle").textContent = "Final Decision";
+    $("nodeDetailsContent").innerHTML = `
+        <div class="detail-row"><label>DECISION</label><span class="status-pill ${escapeHtml(decision.decision || "REVIEW")}">${escapeHtml(decisionLabel(decision.decision))}</span></div>
+        <div class="detail-row"><label>COMPLIANCE SCORE</label><strong>${Number(decision.compliance_score || 0).toFixed(2)} / 100</strong></div>
+        <div class="detail-row"><label>INTEGRITY</label><strong>${state.integrity?.chain_valid ? "Verified hash chain" : "Integrity not verified"}</strong></div>
+        <details class="dna-details"><summary>Decision DNA</summary><code>${escapeHtml(state.decisionDNA?.decision_fingerprint || "Load replay or integrity check to view")}</code></details>`;
+}
 
 function highlightDecisionDependency(evidenceId) {
     if (!decisionStory) return;
@@ -1645,11 +1704,19 @@ try {
 async function loadTrustCenter() {
     if (!state.auditId || state.auditId === "GEMA-SIH-001") return;
     try {
-        const [replay, timeline, critical] = await Promise.all([
+        const [replay, timeline, critical, causalGraph, integrity, decisionDNA] = await Promise.all([
             api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/replay`),
             api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/timeline`),
-            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/critical-evidence`)
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/critical-evidence`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/causal-graph`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/integrity`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/decision-dna`)
         ]);
+        state.causalGraph = causalGraph;
+        state.integrity = integrity;
+        state.decisionDNA = decisionDNA;
+        renderOverview();
+        renderEvidenceGraph();
         renderReplay(replay);
         renderTemporalTimeline(timeline.timeline || []);
         renderCriticalEvidence(critical.critical_evidence || []);
@@ -1828,6 +1895,16 @@ $("loadDemoButton").addEventListener("click", async () => {
 
 $("showWhyButton").addEventListener("click", () => loadDecisionStory(false));
 $("showSkeletonButton").addEventListener("click", () => loadDecisionStory(true));
+$("replayAction").addEventListener("click", async () => { await loadTrustCenter(); document.querySelector('[data-section="overview"]').click(); toast("Decision replay completed."); });
+$("integrityAction").addEventListener("click", async () => { await loadTrustCenter(); toast(state.integrity?.chain_valid ? "Audit integrity verified." : "Integrity requires attention."); });
+$("timelineAction").addEventListener("click", () => { document.querySelector('[data-section="overview"]').click(); $("temporalTimeline").scrollIntoView({ behavior: "smooth", block: "center" }); });
+$("capsuleAction").addEventListener("click", async () => {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return toast("Load an audit before viewing a capsule.");
+    try {
+        const capsule = await api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule`);
+        toast(`Decision Capsule loaded: ${capsule.integrity_metadata?.capsule_fingerprint?.slice(0, 12) || "available"}`);
+    } catch (error) { toast("No saved Decision Capsule yet. Save one from the audit workflow first."); }
+});
 
 /* =========================================================
 UTILITIES
