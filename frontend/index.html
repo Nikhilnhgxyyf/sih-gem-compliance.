@@ -36,44 +36,26 @@
             <span>COMMAND CENTER</span>
         </div>
 
-        <button class="nav-item active" data-section="ingest">
-            <span>⇪</span>
-            Ingest Documents
-        </button>
-
-        <button class="nav-item" data-section="overview">
-            <span>◈</span>
+        <button class="nav-item active" data-section="overview">
             Overview
         </button>
-
-        <button class="nav-item" data-section="bidders">
-            <span>⚖</span>
-            Bidder Comparison
-        </button>
-
         <button class="nav-item" data-section="evidence">
-            <span>◇</span>
-            Evidence Graph
+            Evidence
         </button>
-
         <button class="nav-item" data-section="rules">
-            <span>≡</span>
-            Rule Engine
+            Rules
         </button>
-
         <button class="nav-item" data-section="risk">
-            <span>△</span>
-            Risk & Impact
+            Decision Graph
         </button>
-
         <button class="nav-item" data-section="counterfactual">
-            <span>↯</span>
-            Counterfactual
+            Simulations
         </button>
-
         <button class="nav-item" data-section="ledger">
-            <span>⌁</span>
-            Audit Ledger
+            Timeline
+        </button>
+        <button class="nav-item" data-section="capsule">
+            Decision Capsule
         </button>
 
     </nav>
@@ -105,8 +87,16 @@
     <header class="topbar">
 
         <div>
-            <div class="eyebrow">PROCUREMENT AUDIT / LIVE SESSION</div>
-            <h1>Causal Temporal Procurement Intelligence</h1>
+            <div class="eyebrow">GEM AI AUDITOR</div>
+            <h1>Automated Procurement Compliance Engine</h1>
+            <p class="header-subtitle">Deterministic, evidence-led audit decisions for procurement review.</p>
+        </div>
+
+        <div class="audit-meta" aria-label="Current audit status">
+            <div><span>Audit ID</span><strong id="headerAuditId">GEMA-SIH-001</strong></div>
+            <div><span>Status</span><strong id="headerDecision">Awaiting evaluation</strong></div>
+            <div><span>Last evaluated</span><strong id="lastEvaluated">—</strong></div>
+            <div><span>Integrity</span><strong id="headerIntegrity">Not checked</strong></div>
         </div>
 
         <div class="topbar-actions">
@@ -122,8 +112,10 @@
             </button>
 
             <button class="demo-button" id="loadDemoButton" type="button" title="Loads isolated synthetic demonstration data">
-                Load Synthetic Demo
+                Load Demo Audit
             </button>
+
+            <button class="secondary-button" data-section-target="ingest" type="button">Load Documents</button>
 
             <button class="reset-button" id="resetSessionButton" type="button" title="Clear the tender, all bidders, and audit data">
                 Reset Audit
@@ -140,6 +132,7 @@
         <span class="context-label">PROCURING AUTHORITY</span>
         <strong id="contextDepartment">Not identified</strong>
     </div>
+    <div id="syntheticBanner" class="synthetic-banner hidden" role="status">SYNTHETIC DEMO DATA — deterministic local demonstration; not government verification.</div>
 
 
     <!-- GLOBAL LOADING -->
@@ -147,7 +140,7 @@
 
 
     <!-- INGEST -->
-    <section id="ingest" class="page-section active">
+    <section id="ingest" class="page-section">
 
         <div class="section-heading">
 
@@ -222,7 +215,18 @@
 
 
     <!-- OVERVIEW -->
-    <section id="overview" class="page-section">
+    <section id="overview" class="page-section active">
+
+        <div class="audit-actions panel">
+            <div><span class="eyebrow">AUDIT ACTIONS</span><p>Review the reproducible decision record without changing live audit state.</p></div>
+            <div class="action-buttons">
+                <button class="secondary-button" id="replayAction">Replay Decision</button>
+                <button class="secondary-button" id="integrityAction">Verify Integrity</button>
+                <button class="secondary-button" data-section-target="risk">Run Blast-Radius</button>
+                <button class="secondary-button" id="capsuleAction">View Decision Capsule</button>
+                <button class="secondary-button" id="timelineAction">View Timeline</button>
+            </div>
+        </div>
 
         <div class="hero-grid">
 
@@ -344,6 +348,23 @@
 
         </div>
 
+        <div class="overview-detail-grid">
+            <div class="panel">
+                <div class="panel-header"><div><span class="eyebrow">KEY FINDINGS</span><h2>What needs attention</h2></div><button class="text-button" data-section-target="rules">View rules</button></div>
+                <div id="keyFindings" class="finding-list"><div class="empty-state">Findings will appear after evaluation.</div></div>
+            </div>
+            <div class="panel">
+                <div class="panel-header"><div><span class="eyebrow">EVIDENCE HEALTH</span><h2>Evidence state</h2></div><strong id="evidenceHealthTotal">0 total</strong></div>
+                <div id="evidenceHealth" class="evidence-health"><div class="empty-state">No evidence loaded.</div></div>
+            </div>
+        </div>
+
+        <div class="panel decision-explainer-panel">
+            <div class="panel-header"><div><span class="eyebrow">DECISION EXPLAINER</span><h2>How the final decision was produced</h2></div><button class="text-button" data-section-target="evidence">Open causal graph</button></div>
+            <div id="decisionExplainer" class="decision-explainer"><div>Evidence</div><span>↓</span><div>Rule</div><span>↓</span><div>Evaluation</div><span>↓</span><div>Decision</div></div>
+            <p class="panel-note">Final decision generated by deterministic compliance rules. AI extraction supplies evidence; it does not make the compliance decision.</p>
+        </div>
+
 
         <!-- DECISION GRID -->
 
@@ -390,6 +411,27 @@
 
             </div>
 
+        </div>
+
+        <div class="trust-grid">
+            <div class="panel">
+                <div class="panel-header">
+                    <div><span class="eyebrow">REPRODUCIBLE AUDIT</span><h2>Replay &amp; Integrity</h2></div>
+                    <span id="replayStatus" class="replay-status">NOT RUN</span>
+                </div>
+                <div id="replayResult" class="empty-state">Load an audit to verify the recorded decision against a deterministic replay.</div>
+            </div>
+            <div class="panel">
+                <span class="eyebrow">TEMPORAL INTELLIGENCE</span>
+                <h2>Evidence at Tender Deadline</h2>
+                <div id="temporalTimeline" class="temporal-timeline"><div class="empty-state">No temporal evidence state loaded.</div></div>
+            </div>
+        </div>
+
+        <div class="panel critical-panel">
+            <div class="panel-header"><div><span class="eyebrow">CRITICAL EVIDENCE RANKING</span><h2>Single-Evidence Removal Impact</h2></div><span class="heuristic-badge">HEURISTIC · ISOLATED SIMULATION</span></div>
+            <p class="panel-note">Each row removes one evidence node in a deep-copied audit. The live audit and ledger are never changed.</p>
+            <div id="criticalEvidence" class="critical-evidence"><div class="empty-state">No evidence ranked yet.</div></div>
         </div>
 
     </section>
@@ -444,9 +486,9 @@
         <div class="section-heading">
 
             <div>
-                <span class="eyebrow">KNOWLEDGE GRAPH</span>
-                <h2>Evidence Dependency Graph</h2>
-                <p>Trace evidence from source → entity → requirement.</p>
+                <span class="eyebrow">EVIDENCE REGISTER</span>
+                <h2>Evidence</h2>
+                <p>Select a row to inspect provenance, temporal state, Evidence DNA, and downstream impact.</p>
             </div>
 
             <div class="graph-legend">
@@ -456,6 +498,18 @@
                 <span>□ = rule &nbsp; — supports &nbsp; ┄ depends on</span>
             </div>
 
+        </div>
+
+        <div class="panel evidence-table-panel">
+            <div class="evidence-filter" role="group" aria-label="Filter evidence">
+                <button class="filter-button active" data-evidence-filter="ALL">All</button>
+                <button class="filter-button" data-evidence-filter="VERIFIED">Verified</button>
+                <button class="filter-button" data-evidence-filter="UNVERIFIED">Unverified</button>
+                <button class="filter-button" data-evidence-filter="EXPIRED">Expired</button>
+                <button class="filter-button" data-evidence-filter="CONFLICTING">Conflicting</button>
+                <button class="filter-button" data-evidence-filter="CRITICAL">Critical</button>
+            </div>
+            <div id="evidenceTable" class="evidence-table"><div class="empty-state">No evidence loaded.</div></div>
         </div>
 
         <div id="diffPanel" class="diff-panel hidden"></div>
@@ -551,9 +605,9 @@
         <div class="section-heading">
 
             <div>
-                <span class="eyebrow">IMPACT ANALYSIS</span>
-                <h2>Risk & Blast Radius</h2>
-                <p>Understand exactly what changes when evidence changes.</p>
+                <span class="eyebrow">CAUSAL DECISION GRAPH</span>
+                <h2>Decision Graph &amp; Blast Radius</h2>
+                <p>Trace the deterministic path from document and evidence through rule evaluation to the final decision.</p>
             </div>
 
         </div>
@@ -567,7 +621,7 @@
 
                     <div>
                         <span class="eyebrow">DEPENDENCY PROPAGATION</span>
-                        <h2>Blast Radius Analyzer</h2>
+                        <h2>What-if / Blast-Radius Analysis</h2>
                     </div>
 
                     <span class="architecture-badge">O(|Δ|)</span>
@@ -581,7 +635,7 @@
                     </select>
 
                     <button id="blastButton" class="primary-button">
-                        Analyze Impact
+                        Run Simulation
                     </button>
 
                 </div>
@@ -725,9 +779,9 @@
         <div class="section-heading">
 
             <div>
-                <span class="eyebrow">CRYPTOGRAPHIC AUDIT TRAIL</span>
-                <h2>Immutable Ledger</h2>
-                <p>Every action taken in this session is logged permanently below, each one linked to the last — so nothing can be quietly edited after the fact.</p>
+                <span class="eyebrow">AUDIT TIMELINE</span>
+                <h2>Recorded Audit Events</h2>
+                <p>Every recorded event includes its timestamp, actor, action, and tamper-evident ledger link.</p>
             </div>
 
             <div id="chainStatus" class="chain-status">
@@ -749,6 +803,12 @@
 
         </div>
 
+    </section>
+
+    <section id="capsule" class="page-section">
+        <div class="section-heading"><div><span class="eyebrow">PORTABLE AUDIT ARTIFACT</span><h2>Decision Capsule</h2><p>Contains the evidence, rule, evaluation, and decision state required to reproduce this audit. It is an audit artifact, not a legal certificate.</p></div></div>
+        <div class="capsule-hero panel"><div><span class="eyebrow">DECISION CAPSULE</span><h2 id="capsuleAuditId">No audit loaded</h2><div id="capsuleDetails" class="capsule-details">Load an audit to prepare its reproducible decision capsule.</div></div><div class="capsule-actions"><button id="saveCapsuleButton" class="primary-button">Save Capsule</button><button id="exportCapsuleButton" class="secondary-button">Export Capsule</button><button id="replayCapsuleButton" class="secondary-button">Replay</button><button id="verifyCapsuleButton" class="secondary-button">Verify</button></div></div>
+        <div id="capsuleResult" class="panel empty-state">No Decision Capsule action has been run.</div>
     </section>
 
 

@@ -319,6 +319,7 @@ async function resetAuditSession() {
         $("tenderDepartmentInput").value = "";
         $("ingestError").classList.add("hidden");
         $("ingestSummary").classList.add("hidden");
+        $("syntheticBanner").classList.add("hidden");
         renderIngestChips();
 
         if (evidenceNetwork) {
@@ -402,6 +403,43 @@ if (decision === "PASS") {
         "Evidence or rule dependencies require officer review.";
 }
 
+function renderDashboardDetails() {
+    const evaluation = state.evaluation || {};
+    $("headerAuditId").textContent = state.auditId;
+    $("headerDecision").textContent = decisionLabel(evaluation.decision);
+    const timestamps = Object.values(state.ruleEvaluations || {}).map(item => item.evaluated_at).filter(Boolean);
+    $("lastEvaluated").textContent = timestamps.length ? formatDate(timestamps[0]) : "Not evaluated";
+    $("headerIntegrity").textContent = state.integrity?.chain_valid ? "Verified" : "Pending";
+    $("capsuleAuditId").textContent = state.auditId;
+    $("capsuleDetails").textContent = `Decision: ${decisionLabel(evaluation.decision)} · Score: ${Number(evaluation.compliance_score || 0).toFixed(2)} · Evaluation timestamp: ${timestamps.length ? formatDate(timestamps[0]) : "Not available"}`;
+
+    const findings = [];
+    const orderedRules = [...state.rules].sort((left, right) => {
+        const rank = { FAIL: 0, REVIEW: 1, PASS: 2 };
+        return (rank[state.ruleStatuses?.[left.rule_id]] ?? 1) - (rank[state.ruleStatuses?.[right.rule_id]] ?? 1);
+    });
+    for (const rule of orderedRules) {
+        const status = state.ruleStatuses?.[rule.rule_id] || "REVIEW";
+        if (status !== "PASS" || findings.length < 2) findings.push({ status, rule });
+        if (findings.length >= 4) break;
+    }
+    $("keyFindings").innerHTML = findings.length ? findings.map(({ status, rule }) => `
+        <div class="finding-item"><span class="finding-mark ${status}">${status === "PASS" ? "✓" : status === "FAIL" ? "×" : "!"}</span><div><strong>${escapeHtml(rule.rule_id)}</strong><br><span>${escapeHtml(rule.clause_text)}</span></div></div>`).join("") : '<div class="empty-state">Findings will appear after evaluation.</div>';
+
+    const statuses = ["VERIFIED", "UNVERIFIED", "EXPIRED", "CONFLICTING", "REJECTED"];
+    const counts = Object.fromEntries(statuses.map(status => [status, 0]));
+    state.evidence.forEach(node => { counts[node.status] = (counts[node.status] || 0) + 1; });
+    $("evidenceHealthTotal").textContent = `${state.evidence.length} total`;
+    $("evidenceHealth").innerHTML = state.evidence.length ? statuses.map(status => `<div class="health-item"><strong>${counts[status]}</strong><span>${status}</span></div>`).join("") : '<div class="empty-state">No evidence loaded.</div>';
+}
+
+function decisionLabel(decision) {
+    if (decision === "PASS") return "Compliant";
+    if (decision === "FAIL") return "Non-compliant";
+    return decision === "REVIEW" ? "Review required" : "Awaiting evaluation";
+}
+
+renderDashboardDetails();
 
 /* Score Ring */
 
@@ -515,6 +553,16 @@ const EVIDENCE_STATUS_COLOR = {
 
 const RULE_STATUS_COLOR = { PASS: "#16a34a", FAIL: "#dc2626", REVIEW: "#f59e0b" };
 
+let evidenceFilter = "ALL";
+function renderEvidenceTable() {
+    const critical = new Set((state.criticalEvidence || []).filter(item => item.impact_label === "DECISION-CRITICAL").map(item => item.evidence_id));
+    const rows = state.evidence.filter(node => evidenceFilter === "ALL" || (evidenceFilter === "CRITICAL" ? critical.has(node.node_id) : node.status === evidenceFilter));
+    const validity = node => node.valid_until ? `Until ${formatDate(node.valid_until)}` : node.valid_from ? `From ${formatDate(node.valid_from)}` : "Unknown";
+    const body = rows.map(node => `<div class="evidence-row" onclick="selectEvidence('${escapeJs(node.node_id)}')"><div><strong>${escapeHtml(node.node_id)}</strong><small>${escapeHtml(node.entity_name)}</small></div><div>${escapeHtml(String(node.extracted_value))}</div><div>${escapeHtml(node.source_doc)}</div><div>${Math.round(Number(node.confidence || 0) * 100)}%</div><div>${escapeHtml(validity(node))}</div><div><span class="evidence-status ${escapeHtml(node.status || "UNVERIFIED")}">${escapeHtml(node.status || "UNVERIFIED")}</span></div><div>${critical.has(node.node_id) ? "DECISION-CRITICAL" : "Supporting"}</div></div>`).join("");
+    const header = '<div class="evidence-row header"><div>EVIDENCE</div><div>VALUE</div><div>SOURCE</div><div>CONFIDENCE</div><div>VALIDITY</div><div>STATUS</div><div>IMPACT</div></div>';
+    $("evidenceTable").innerHTML = state.evidence.length ? header + (body || '<div class="empty-state">No evidence matches this filter.</div>') : '<div class="empty-state">No evidence loaded.</div>';
+}
+
 function renderEvidenceGraph() {
 
 const container = $("graphContainer");
@@ -536,36 +584,24 @@ if (evidenceNetwork) {
     evidenceNetwork = null;
 }
 
-const nodes = new vis.DataSet([
-    ...state.evidence.map(n => ({
-        id: n.node_id,
-        label: `${n.node_id}\n${n.entity_name}`,
-        shape: "dot",
-        size: 14,
-        color: EVIDENCE_STATUS_COLOR[n.status] || "#94a3b8",
-        font: { size: 10, face: "JetBrains Mono", color: "#334155" }
-    })),
-    ...state.rules.map(r => ({
-        id: r.rule_id,
-        label: r.rule_id,
-        shape: "box",
-        color: RULE_STATUS_COLOR[state.ruleStatuses?.[r.rule_id]] || "#94a3b8",
-        font: { size: 10, face: "JetBrains Mono", color: "#ffffff" }
-    }))
-]);
-
-const edges = new vis.DataSet(
-    state.edges.map(e => ({
-        from: e.source_id,
-        to: e.target_id,
-        arrows: "to",
-        dashes: e.relationship === "RULE_DEPENDENCY",
-        color: { color: e.relationship === "RULE_DEPENDENCY" ? "#2563eb" : "#cbd5e1" }
-    }))
-);
+const causal = state.causalGraph;
+const graphNodes = causal?.nodes || [
+    ...state.evidence.map(n => ({ id: n.node_id, type: "EVIDENCE", label: `${n.node_id}\n${n.entity_name}`, data: n })),
+    ...state.rules.map(r => ({ id: r.rule_id, type: "RULE", label: r.rule_id, data: r })),
+    { id: "DECISION", type: "DECISION", label: decisionLabel(state.evaluation?.decision), data: state.evaluation }
+];
+const colorForType = { DOCUMENT: "#64748b", EVIDENCE: "#2563eb", CLAIM: "#7c3aed", RULE: "#1e3a5f", RULE_EVALUATION: "#d97706", DECISION: "#059669" };
+const nodes = new vis.DataSet(graphNodes.map(node => ({
+    id: node.id, label: `${node.type}\n${String(node.label || node.id).slice(0, 48)}`, group: node.type,
+    shape: node.type === "DOCUMENT" ? "box" : node.type === "DECISION" ? "hexagon" : node.type === "EVIDENCE" ? "dot" : "box",
+    size: node.type === "EVIDENCE" ? 13 : undefined,
+    color: colorForType[node.type] || "#64748b", font: { size: 10, face: "Inter", color: "#ffffff" }
+})));
+const edges = new vis.DataSet((causal?.edges || state.edges).map(edge => ({ from: edge.source_id, to: edge.target_id, arrows: "to", color: { color: "#cbd5e1" } })));
 
 evidenceNetwork = new vis.Network(container, { nodes, edges }, {
-    physics: { stabilization: true, barnesHut: { gravitationalConstant: -3500, springLength: 100 } },
+    layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 170, nodeSpacing: 90 } },
+    physics: false,
     interaction: { hover: true, tooltipDelay: 150 },
     edges: { smooth: { type: "continuous" } }
 });
@@ -573,9 +609,10 @@ evidenceNetwork = new vis.Network(container, { nodes, edges }, {
 evidenceNetwork.on("click", (params) => {
     if (!params.nodes.length) return;
     const clicked = params.nodes[0];
-    if (state.evidence.some(n => n.node_id === clicked)) {
-        selectEvidence(clicked);
-    }
+    const clickedNode = graphNodes.find(node => node.id === clicked);
+    if (clickedNode?.type === "EVIDENCE") selectEvidence(clicked);
+    else if (clickedNode?.type === "RULE") inspectRule(clicked);
+    else if (clickedNode?.type === "DECISION") inspectDecision();
 });
 
 populateBlastSelector();
@@ -654,8 +691,13 @@ $("nodeDetailsContent").innerHTML = `
     </div>
 
     <div class="detail-row">
-        <label>VALID UNTIL</label>
-        <strong>${node.valid_until || "No expiry specified"}</strong>
+        <label>TEMPORAL VALIDITY</label>
+        <strong>Valid from ${node.valid_from ? escapeHtml(formatDate(node.valid_from)) : "not specified"} until ${node.valid_until ? escapeHtml(formatDate(node.valid_until)) : "not specified"}</strong>
+    </div>
+
+    <div class="detail-row">
+        <label>TENDER DEADLINE</label>
+        <strong>${escapeHtml($("deadline").textContent || "Not available")} — verify temporal state in Overview</strong>
     </div>
 
     ${node.source_quote ? `
@@ -694,7 +736,42 @@ $("nodeDetailsContent").innerHTML = `
     </button>
 `;
 
+    loadEvidenceDNA(nodeId);
+
 };
+
+async function loadEvidenceDNA(nodeId) {
+    try {
+        const dna = await api(`/api/v3/evidence/${encodeURIComponent(nodeId)}/dna`);
+        const affected = dna.dependent_rule_ids?.join(", ") || "No direct rules";
+        $("nodeDetailsContent").insertAdjacentHTML("afterbegin", `
+            <div class="detail-row"><label>AFFECTED RULES</label><strong>${escapeHtml(affected)}</strong></div>
+            <details class="dna-details"><summary>Evidence DNA</summary><code>${escapeHtml(dna.evidence_fingerprint || "Not available")}</code></details>`);
+    } catch (error) { console.warn("Evidence DNA unavailable.", error); }
+}
+
+function inspectRule(ruleId) {
+    const rule = state.rules.find(item => item.rule_id === ruleId);
+    const evaluation = state.ruleEvaluations?.[ruleId] || {};
+    if (!rule) return;
+    $("selectedNodeTitle").textContent = `Rule ${rule.rule_id}`;
+    $("nodeDetailsContent").innerHTML = `
+        <div class="detail-row"><label>CLAUSE</label><strong>${escapeHtml(rule.clause_text)}</strong></div>
+        <div class="detail-row"><label>REQUIREMENT</label><strong>${rule.is_mandatory ? "MANDATORY" : "OPTIONAL"}</strong></div>
+        <div class="detail-row"><label>EVALUATION</label><span class="status-pill ${escapeHtml(evaluation.status || state.ruleStatuses?.[ruleId] || "REVIEW")}">${escapeHtml(evaluation.status || state.ruleStatuses?.[ruleId] || "REVIEW")}</span></div>
+        <div class="detail-row"><label>SUPPORTING EVIDENCE</label><strong>${escapeHtml(evaluation.evidence_ids?.join(", ") || "No resolved evidence")}</strong></div>
+        <div class="detail-row"><label>DETERMINISTIC REASONING</label><strong>${escapeHtml(evaluation.reasoning || "Not evaluated")}</strong></div>`;
+}
+
+function inspectDecision() {
+    const decision = state.evaluation || {};
+    $("selectedNodeTitle").textContent = "Final Decision";
+    $("nodeDetailsContent").innerHTML = `
+        <div class="detail-row"><label>DECISION</label><span class="status-pill ${escapeHtml(decision.decision || "REVIEW")}">${escapeHtml(decisionLabel(decision.decision))}</span></div>
+        <div class="detail-row"><label>COMPLIANCE SCORE</label><strong>${Number(decision.compliance_score || 0).toFixed(2)} / 100</strong></div>
+        <div class="detail-row"><label>INTEGRITY</label><strong>${state.integrity?.chain_valid ? "Verified hash chain" : "Integrity not verified"}</strong></div>
+        <details class="dna-details"><summary>Decision DNA</summary><code>${escapeHtml(state.decisionDNA?.decision_fingerprint || "Load replay or integrity check to view")}</code></details>`;
+}
 
 function highlightDecisionDependency(evidenceId) {
     if (!decisionStory) return;
@@ -1622,6 +1699,7 @@ try {
     if (graph.tender_deadline) $("deadline").textContent = formatDate(graph.tender_deadline);
 
     renderEverything();
+    loadTrustCenter();
 
     toast("Audit state synchronized.");
 
@@ -1634,6 +1712,65 @@ try {
     );
 
     loadDemoState();
+}
+
+async function loadTrustCenter() {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return;
+    try {
+        const [replay, timeline, critical, causalGraph, integrity, decisionDNA] = await Promise.all([
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/replay`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/timeline`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/critical-evidence`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/causal-graph`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/integrity`),
+            api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/decision-dna`)
+        ]);
+        state.causalGraph = causalGraph;
+        state.integrity = integrity;
+        state.decisionDNA = decisionDNA;
+        state.criticalEvidence = critical.critical_evidence || [];
+        renderOverview();
+        renderEvidenceGraph();
+        renderReplay(replay);
+        renderTemporalTimeline(timeline.timeline || []);
+        renderCriticalEvidence(critical.critical_evidence || []);
+    } catch (error) {
+        console.warn("Trust center unavailable.", error);
+    }
+}
+
+function renderReplay(result) {
+    const status = $("replayStatus");
+    const verified = result.replay_status === "REPLAY VERIFIED";
+    status.textContent = result.replay_status || "REPLAY MISMATCH";
+    status.className = `replay-status ${verified ? "verified" : "mismatch"}`;
+    const original = result.original_decision || result.stored_decision || {};
+    const replayed = result.replayed_decision || {};
+    $("replayResult").innerHTML = `
+        <div class="replay-comparison">
+            <div><span>ORIGINAL</span><strong>${escapeHtml(original.decision || "—")} · ${Number(result.original_score ?? original.compliance_score ?? 0).toFixed(2)}</strong></div>
+            <div><span>REPLAYED</span><strong>${escapeHtml(replayed.decision || "—")} · ${Number(result.replayed_score ?? replayed.compliance_score ?? 0).toFixed(2)}</strong></div>
+        </div>
+        <div class="integrity-line"><strong>${result.integrity?.chain_valid ? "INTEGRITY VERIFIED" : "INTEGRITY ISSUE"}</strong> — ${escapeHtml(result.integrity?.message || "No integrity result")}</div>
+        ${result.differences?.length ? `<small>${escapeHtml(result.differences.join("; "))}</small>` : ""}`;
+}
+
+function renderTemporalTimeline(rows) {
+    $("temporalTimeline").innerHTML = rows.length ? rows.map(row => `
+        <div class="temporal-item">
+            <div><strong>${escapeHtml(row.evidence_id)} · ${escapeHtml(row.entity_name)}</strong><small>${escapeHtml(row.explanation)}</small></div>
+            <span class="temporal-status ${escapeHtml(row.display_status)}">${escapeHtml(row.display_status)}</span>
+            <div class="temporal-dates">Document date: ${escapeHtml(row.document_date ? formatDate(row.document_date) : "Not available")} · Validity: ${escapeHtml(row.validity_window?.from ? formatDate(row.validity_window.from) : "Not specified")} — ${escapeHtml(row.validity_window?.until ? formatDate(row.validity_window.until) : "Not specified")} · Tender deadline: ${escapeHtml(formatDate(row.tender_deadline))}</div>
+        </div>`).join("") : '<div class="empty-state">No temporal evidence state loaded.</div>';
+}
+
+function renderCriticalEvidence(rows) {
+    $("criticalEvidence").innerHTML = rows.length ? rows.map(row => `
+        <div class="critical-row">
+            <div><strong>${escapeHtml(row.evidence_id)}</strong><small>${escapeHtml(row.method || "HEURISTIC")}</small></div>
+            <div class="critical-metrics"><span>${row.affected_rule_count} rule(s)</span><span>${Number(row.weighted_rule_impact_pct || 0).toFixed(1)}% weighted impact</span><span>Score Δ ${Number(row.score_delta || 0).toFixed(2)}</span><span>${escapeHtml(row.temporal_importance || "LOW")} temporal importance</span><span>${Math.round(Number(row.confidence || 0) * 100)}% confidence</span></div>
+            <span class="impact-label-badge ${escapeHtml(row.impact_label)}">${escapeHtml(row.impact_label)}</span>
+        </div>`).join("") : '<div class="empty-state">No evidence ranked yet.</div>';
 }
 
 }
@@ -1743,6 +1880,7 @@ $("ledgerCount").textContent =
 
 renderOverview();
 renderEvidenceGraph();
+renderEvidenceTable();
 renderRules();
 renderLedger();
 
@@ -1763,6 +1901,7 @@ $("loadDemoButton").addEventListener("click", async () => {
     try {
         const result = await api("/api/v3/demo/seed", { method: "POST" });
         await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
+        $("syntheticBanner").classList.remove("hidden");
         document.querySelector('[data-section="overview"]').click();
         toast(`${result.message} Results are clearly marked synthetic.`);
     } catch (error) {
@@ -1770,8 +1909,38 @@ $("loadDemoButton").addEventListener("click", async () => {
     }
 });
 
+document.querySelectorAll(".filter-button").forEach(button => button.addEventListener("click", () => {
+    evidenceFilter = button.dataset.evidenceFilter;
+    document.querySelectorAll(".filter-button").forEach(item => item.classList.toggle("active", item === button));
+    renderEvidenceTable();
+}));
+
+async function capsuleAction(action) {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return toast("Load an audit first.");
+    try {
+        const endpoint = action === "save" ? `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/save` : `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/${action}`;
+        const result = await api(endpoint, { method: action === "export" ? "GET" : "POST" });
+        $("capsuleResult").textContent = action === "export" ? "Capsule export is ready in the response payload." : `${action.toUpperCase()} completed: ${result.status || result.capsule_integrity?.status || "verified"}.`;
+        $("capsuleResult").classList.remove("empty-state");
+    } catch (error) { toast(`Capsule ${action} failed: ${error.message}`); }
+}
+$("saveCapsuleButton").addEventListener("click", () => capsuleAction("save"));
+$("exportCapsuleButton").addEventListener("click", () => capsuleAction("export"));
+$("replayCapsuleButton").addEventListener("click", () => capsuleAction("replay"));
+$("verifyCapsuleButton").addEventListener("click", () => capsuleAction("verify"));
+
 $("showWhyButton").addEventListener("click", () => loadDecisionStory(false));
 $("showSkeletonButton").addEventListener("click", () => loadDecisionStory(true));
+$("replayAction").addEventListener("click", async () => { await loadTrustCenter(); document.querySelector('[data-section="overview"]').click(); toast("Decision replay completed."); });
+$("integrityAction").addEventListener("click", async () => { await loadTrustCenter(); toast(state.integrity?.chain_valid ? "Audit integrity verified." : "Integrity requires attention."); });
+$("timelineAction").addEventListener("click", () => { document.querySelector('[data-section="overview"]').click(); $("temporalTimeline").scrollIntoView({ behavior: "smooth", block: "center" }); });
+$("capsuleAction").addEventListener("click", async () => {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return toast("Load an audit before viewing a capsule.");
+    try {
+        const capsule = await api(`/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule`);
+        toast(`Decision Capsule loaded: ${capsule.integrity_metadata?.capsule_fingerprint?.slice(0, 12) || "available"}`);
+    } catch (error) { toast("No saved Decision Capsule yet. Save one from the audit workflow first."); }
+});
 
 /* =========================================================
 UTILITIES
