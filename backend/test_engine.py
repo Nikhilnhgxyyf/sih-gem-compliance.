@@ -209,7 +209,29 @@ class EngineTestCase(unittest.TestCase):
         result = engine.simulate_evidence_removal("E001")
         self.assertTrue(result["decision_changed"])
         self.assertNotEqual(engine.evidence_nodes["E001"].status, "REJECTED")
-        self.assertTrue(engine.critical_evidence()[0]["single_point_of_failure"])
+        critical = engine.critical_evidence()[0]
+        self.assertTrue(critical["single_point_of_failure"])
+        self.assertEqual(critical["impact_label"], "DECISION-CRITICAL")
+        self.assertIn("weighted_rule_impact_pct", critical)
+        self.assertIn("confidence", critical)
+
+    def test_replay_reports_comparison_and_timeline_has_demo_ready_temporal_fields(self):
+        engine = self.make_engine()
+        evidence = self.evidence("E-PAN", "pan", "ABCDE1234F").model_copy(update={
+            "valid_until": datetime(2025, 12, 31, tzinfo=timezone.utc),
+            "issue_date": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        })
+        engine.register_evidence(evidence)
+        engine.register_rule(RuleNode(rule_id="R-PAN", clause_text="PAN", ast=ASTNode(op="EXISTS", field="pan")))
+        engine.rebuild_dependencies()
+        replay = engine.replay()
+        self.assertEqual(replay["replay_status"], "REPLAY VERIFIED")
+        self.assertEqual(replay["original_score"], replay["replayed_score"])
+        self.assertTrue(replay["integrity"]["chain_valid"])
+        timeline = engine.timeline()[0]
+        self.assertEqual(timeline["display_status"], "EXPIRED")
+        self.assertEqual(timeline["explanation"], "EXPIRED AT TENDER DEADLINE")
+        self.assertIn("tender_deadline", timeline)
 
     def test_new_audit_apis_expose_dna_replay_and_synthetic_demo(self):
         import main
