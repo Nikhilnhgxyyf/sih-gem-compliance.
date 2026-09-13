@@ -60,6 +60,8 @@ TENDER_DOCUMENT = {
     "notes": "Tender notice / eligibility document for GeM Bid No. GEM/2026/B/8847213.",
 }
 
+TENDER_DEPARTMENT = "Nashik Municipal Corporation"
+
 TENDER_REQUIREMENTS = [
     {
         "description": "Average annual turnover of at least \u20b9100 Crore in the last three financial years",
@@ -431,6 +433,7 @@ def try_fixture_extraction(bidder_payload, tender_payload):
         "documents": documents,
         "requirements": list(TENDER_REQUIREMENTS) if tender_payload is not None else [],
         "tender_closing_date": TENDER_CLOSING_DATE if tender_payload is not None else None,
+        "tender_department": TENDER_DEPARTMENT if tender_payload is not None else None,
         "extraction_model": "demo-fixture",
     }
 
@@ -446,4 +449,3 @@ def try_fixture_extraction(bidder_payload, tender_payload):
 # Sunrise coming back as a clean PASS (not the REVIEW/50.0 you saw
 # before) is the direct proof the EMD DATE_AFTER fix worked.
 # ----------------------------------------------------------------------
-

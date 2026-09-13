@@ -73,6 +73,7 @@ class EvidenceNode(BaseModel):
     status: EvidenceStatus = EvidenceStatus.UNVERIFIED
 
     source_doc: str
+    document_hash: Optional[str] = None
 
     page_number: Optional[int] = None
 
@@ -80,6 +81,10 @@ class EvidenceNode(BaseModel):
 
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
+    extraction_timestamp: Optional[datetime] = None
+    originating_event: Optional[str] = None
+    verified_by: Optional[str] = None
+    verified_at: Optional[datetime] = None
 
 
 # ============================================================
@@ -99,6 +104,8 @@ class RuleNode(BaseModel):
     )
 
     is_mandatory: bool = True
+    version: str = "1.0"
+    effective_from: Optional[datetime] = None
 
 
 # ============================================================
@@ -173,6 +180,8 @@ class AuditEvent(BaseModel):
 
     previous_hash: str
 
+    nonce: str
+
     event_hash: str
 
 
@@ -184,6 +193,7 @@ class EvidenceCorrectionRequest(BaseModel):
     node_id: str
     new_value: Any
     actor: str
+    reason: str = Field(min_length=3, max_length=1000)
 
 
 class CounterfactualRequest(BaseModel):

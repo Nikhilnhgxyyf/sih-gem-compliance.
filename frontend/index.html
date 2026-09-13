@@ -66,6 +66,11 @@
             Risk & Impact
         </button>
 
+        <button class="nav-item" data-section="vigilance">
+            <span>◉</span>
+            Tender Stress-Tester
+        </button>
+
         <button class="nav-item" data-section="counterfactual">
             <span>↯</span>
             Counterfactual
@@ -121,9 +126,21 @@
                 ↻
             </button>
 
+            <button class="reset-button" id="resetSessionButton" type="button" title="Clear the tender, all bidders, and audit data">
+                Reset Audit
+            </button>
+
         </div>
 
     </header>
+
+    <div id="tenderContextBar" class="tender-context-bar hidden" role="status">
+        <span class="context-label">ACTIVE TENDER</span>
+        <strong id="contextTenderName">No tender selected</strong>
+        <span class="context-divider"></span>
+        <span class="context-label">PROCURING AUTHORITY</span>
+        <strong id="contextDepartment">Not identified</strong>
+    </div>
 
 
     <!-- GLOBAL LOADING -->
@@ -189,6 +206,11 @@
             <input id="bidderLabelInput" type="text" placeholder="e.g. ABC Technologies Pvt Ltd">
         </div>
 
+        <div class="form-group">
+            <label>PROCURING DEPARTMENT / AUTHORITY <small>(optional — GEMA also tries to extract this from the tender)</small></label>
+            <input id="tenderDepartmentInput" type="text" placeholder="e.g. Nashik Municipal Corporation">
+        </div>
+
         <div id="ingestError" class="ingest-error hidden"></div>
 
         <button id="ingestButton" class="primary-button full" disabled>
@@ -197,6 +219,18 @@
 
         <div id="ingestSummary" class="ingest-summary hidden"></div>
 
+    </section>
+
+    <!-- PRE-PUBLISH VIGILANCE -->
+    <section id="vigilance" class="page-section">
+        <div class="section-heading"><div>
+            <span class="eyebrow">PRE-PUBLISH VIGILANCE</span>
+            <h2>Draft Tender Stress-Tester</h2>
+            <p>Locally tests the active tender rules against 1,000 synthetic registered GeM vendor profiles.</p>
+        </div></div>
+        <div id="vigilancePanel" class="panel vigilance-panel">
+            <div class="empty-state">Upload a tender, then open this tab to run the market restrictiveness analysis.</div>
+        </div>
     </section>
 
 
@@ -276,6 +310,20 @@
 
             </div>
 
+        </div>
+
+
+        <div class="panel score-explanation-panel">
+            <div class="panel-header">
+                <div>
+                    <span class="eyebrow">EXPLAINABLE SCORING</span>
+                    <h2>Why this score?</h2>
+                </div>
+                <span id="passedRuleSummary" class="architecture-badge">0 passed</span>
+            </div>
+            <div id="scoreExplanation" class="score-explanation">
+                <div class="empty-state">Rule contributions will appear after evaluation.</div>
+            </div>
         </div>
 
 
@@ -369,6 +417,7 @@
                 <span class="eyebrow">SIDE-BY-SIDE</span>
                 <h2>Bidder Comparison</h2>
                 <p>Every bidder ingested this session, ranked by compliance score. Click one to switch every other tab to that bidder.</p>
+                <p id="comparisonDepartment" class="department-context hidden"></p>
             </div>
 
         </div>
@@ -705,6 +754,14 @@
     <!-- TOAST -->
     <div id="toast" class="toast">
         <span id="toastMessage"></span>
+    </div>
+
+    <div id="rtiModal" class="rti-modal hidden" role="dialog" aria-modal="true" aria-labelledby="rtiModalTitle">
+        <div class="rti-modal-card">
+            <button class="rti-close" type="button" onclick="closeRtiBrief()" aria-label="Close legal brief">×</button>
+            <div id="rtiBriefContent"></div>
+            <button class="primary-button" type="button" onclick="window.print()">Print / Save PDF</button>
+        </div>
     </div>
 
 </main>

@@ -2,9 +2,12 @@ import unittest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from schemas import ASTNode, EvidenceNode, RuleNode, RuleStatus
+from tender_rigging_engine import evaluate_tender_restrictiveness
+from rti_generator import generate_rti_legal_brief
 
 
 class EngineTestCase(unittest.TestCase):
@@ -73,11 +76,17 @@ class EngineTestCase(unittest.TestCase):
             ast=ASTNode(op="RULE_REF", field="R001"),
         ))
         engine.rebuild_dependencies()
-        result = engine.incremental_recalculate("E001", 130, "Officer")
+        result = engine.incremental_recalculate("E001", 130, "Officer", "Verified against the original financial statement")
         self.assertEqual(result["affected_rules"], ["R001", "R002"])
         self.assertEqual(result["new_decision"], "PASS")
         self.assertEqual(engine.current_rule_states["R001"], RuleStatus.PASS)
         self.assertEqual(engine.current_rule_states["R002"], RuleStatus.PASS)
+        blast = engine.analyze_blast_radius("E001")
+        self.assertEqual(blast["propagation_edges"], [
+            {"from": "E001", "to": "R001"},
+            {"from": "R001", "to": "R002"},
+        ])
+        self.assertGreater(blast["score_at_risk"], 0)
 
     def test_ledger_detects_tampering(self):
         engine = self.make_engine()
@@ -86,6 +95,16 @@ class EngineTestCase(unittest.TestCase):
         valid, message = engine.verify_chain_integrity()
         self.assertFalse(valid)
         self.assertIn("Tampering detected", message)
+
+    def test_merkle_root_and_replay_protection_detect_tampering(self):
+        engine = self.make_engine()
+        root = engine.merkle_root()
+        engine._append_to_ledger("TEST", "SYSTEM", {"step": 1})
+        self.assertNotEqual(root, engine.merkle_root())
+        engine.ledger[1].nonce = engine.ledger[0].nonce
+        valid, message = engine.verify_chain_integrity()
+        self.assertFalse(valid)
+        self.assertIn("Replay nonce", message)
 
     def test_api_officer_override_and_multi_change_counterfactual(self):
         # Import here so engine-only tests stay independent from FastAPI state.
@@ -108,6 +127,7 @@ class EngineTestCase(unittest.TestCase):
         self.assertEqual(client.post("/api/v3/ingest", json=payload).status_code, 200)
         corrected = client.post("/api/v3/officer-override", json={
             "node_id": "E001", "new_value": 130, "actor": "Officer",
+            "reason": "Verified against the original financial statement",
         })
         self.assertEqual(corrected.status_code, 200)
         self.assertEqual(corrected.json()["impact_analysis"]["new_decision"], "PASS")
@@ -117,6 +137,73 @@ class EngineTestCase(unittest.TestCase):
         ]})
         self.assertEqual(simulation.status_code, 200)
         self.assertEqual(simulation.json()["status"], "ALREADY_COMPLIANT")
+
+    def test_api_session_reset_clears_bidders_and_tender(self):
+        import main
+
+        main.engines.clear()
+        main.bidder_labels.clear()
+        main.active_bidder_id = None
+        main.current_tender_rules = []
+        main.current_tender_deadline = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        main.current_tender_filename = "previous-tender.pdf"
+        main.engines["BIDDER-1"] = self.make_engine()
+        main.bidder_labels["BIDDER-1"] = "Previous bidder"
+        main.active_bidder_id = "BIDDER-1"
+
+        response = TestClient(main.app).post("/api/v3/session/reset")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["cleared_bidders"], 1)
+        self.assertEqual(main.engines, {})
+        self.assertEqual(main.bidder_labels, {})
+        self.assertIsNone(main.active_bidder_id)
+        self.assertIsNone(main.current_tender_rules)
+        self.assertIsNone(main.current_tender_deadline)
+        self.assertIsNone(main.current_tender_filename)
+
+    def test_current_tender_exposes_procuring_department(self):
+        import main
+
+        main.current_tender_filename = "hospital-tender.pdf"
+        main.current_tender_rules = []
+        main.current_tender_department = "Nashik Municipal Corporation"
+
+        response = TestClient(main.app).get("/api/v3/tender/current")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["department"], "Nashik Municipal Corporation")
+
+    def test_tender_department_is_normalized_and_limited(self):
+        import main
+
+        self.assertEqual(
+            main.normalize_tender_department("  Nashik   Municipal Corporation  "),
+            "Nashik Municipal Corporation",
+        )
+        with self.assertRaises(HTTPException):
+            main.normalize_tender_department("x" * 201)
+
+    def test_pre_publish_restrictiveness_uses_fixed_thousand_vendor_market(self):
+        rules = [
+            RuleNode(rule_id="R001", clause_text="Turnover", ast=ASTNode(op=">=", field="turnover", value=1_000_000_000)),
+            RuleNode(rule_id="R002", clause_text="Projects", ast=ASTNode(op=">=", field="qualifying_project_count", value=3)),
+            RuleNode(rule_id="R003", clause_text="PAN", ast=ASTNode(op="EXISTS", field="pan")),
+            RuleNode(rule_id="R004", clause_text="GST", ast=ASTNode(op="EXISTS", field="gstin")),
+        ]
+        result = evaluate_tender_restrictiveness(rules)
+        self.assertEqual(result["total_market_vendors"], 1000)
+        self.assertEqual(result["eligible_vendors_count"], 5)
+        self.assertEqual(result["restrictiveness_score"], 99.5)
+
+    def test_rti_brief_contains_failed_deterministic_clause_and_ledger_proof(self):
+        engine = self.make_engine()
+        engine.register_evidence(self.evidence("E001", "turnover", 80))
+        engine.register_rule(RuleNode(rule_id="R001", clause_text="Turnover threshold", ast=ASTNode(op=">=", field="turnover", value=100)))
+        engine.evaluate_all_rules()
+        brief = generate_rti_legal_brief("BIDDER-2", "GEM/2026/B/8847213", engine, engine.ledger[-1].event_hash)
+        self.assertEqual(brief["violations"][0]["ast_result"], "FAIL (Logical False)")
+        self.assertEqual(brief["cryptographic_audit_footprint"]["genesis_block_reference"], engine.ledger[0].event_hash)
 
 
 if __name__ == "__main__":

@@ -217,6 +217,31 @@ align-items: center;
 margin-bottom: 30px;
 }
 
+.tender-context-bar {
+display: flex;
+align-items: center;
+gap: 10px;
+padding: 11px 14px;
+margin: -12px 0 22px;
+border: 1px solid #bfdbfe;
+border-left: 4px solid var(--blue);
+border-radius: 8px;
+background: #eff6ff;
+font-size: 11px;
+}
+
+.context-label {
+font-family: "JetBrains Mono", monospace;
+font-size: 9px;
+letter-spacing: .8px;
+color: #475569;
+}
+
+.context-divider {
+height: 18px;
+border-left: 1px solid #93c5fd;
+}
+
 .topbar h1 {
 margin: 5px 0 0;
 font-size: 26px;
@@ -260,6 +285,26 @@ border: 1px solid var(--border);
 background: white;
 border-radius: 8px;
 color: var(--muted);
+}
+
+.reset-button {
+border: 1px solid #fecaca;
+background: #fff;
+color: #b91c1c;
+padding: 9px 12px;
+border-radius: 8px;
+font-size: 10px;
+font-weight: 700;
+}
+
+.reset-button:hover:not(:disabled) {
+background: #fef2f2;
+border-color: #f87171;
+}
+
+.reset-button:disabled {
+cursor: wait;
+opacity: .6;
 }
 
 /* SECTIONS */
@@ -788,6 +833,49 @@ gap: 6px;
 margin-top: 15px;
 }
 
+.score-explanation-panel {
+margin-top: 18px;
+}
+
+.score-explanation {
+margin-top: 14px;
+}
+
+.score-rule-row {
+display: grid;
+grid-template-columns: 70px 80px 95px 1fr;
+gap: 10px;
+align-items: center;
+padding: 10px 0;
+border-bottom: 1px solid var(--border);
+font-size: 11px;
+}
+
+.score-rule-row small {
+color: var(--muted);
+}
+
+.blast-flow {
+display: flex;
+flex-direction: column;
+gap: 5px;
+margin-top: 14px;
+padding: 12px;
+border-left: 3px solid var(--blue);
+background: #f8fafc;
+font-family: "JetBrains Mono", monospace;
+font-size: 10px;
+}
+
+@media (max-width: 750px) {
+.score-rule-row {
+grid-template-columns: 60px 72px 1fr;
+}
+.score-rule-row small {
+grid-column: 1 / -1;
+}
+}
+
 .rule-chip {
 background: #eff6ff;
 color: #1d4ed8;
@@ -1275,7 +1363,7 @@ gap: 8px;
 
 .bidder-row {
 display: grid;
-grid-template-columns: 32px 1fr auto auto auto;
+grid-template-columns: 32px 1fr auto auto auto auto;
 align-items: center;
 gap: 12px;
 padding: 12px;
@@ -1337,6 +1425,28 @@ color: #1e3a8a;
 margin-left: 8px;
 text-decoration: underline;
 }
+
+.department-context {
+margin: 8px 0 0;
+color: #1e3a8a;
+font-size: 12px;
+font-weight: 600;
+}
+
+.vigilance-alert { padding: 22px; border-radius: 10px; background: #fff7ed; border: 1px solid #fed7aa; }
+.vigilance-alert.critical { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+.vigilance-alert strong { display: block; font-size: 46px; margin: 8px 0; }
+.vigilance-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
+.vigilance-stats div, .elimination-list div { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.vigilance-stats strong, .vigilance-stats span, .elimination-list strong, .elimination-list span, .elimination-list small { display: block; }
+.vigilance-stats span, .elimination-list small { color: var(--muted); font-size: 10px; margin-top: 4px; }
+.elimination-list { display: grid; gap: 8px; margin: 12px 0 18px; }
+.lock-hash, .audit-footprint small { display: block; font-family: "JetBrains Mono", monospace; font-size: 9px; overflow-wrap: anywhere; }
+.rti-modal { position: fixed; inset: 0; z-index: 30; background: rgba(9, 17, 31, .65); padding: 30px; overflow: auto; }
+.rti-modal-card { position: relative; max-width: 900px; margin: auto; padding: 28px; border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
+.rti-close { position: absolute; top: 10px; right: 14px; border: 0; background: transparent; font-size: 26px; }
+.audit-footprint { margin: 18px 0; padding: 12px; background: #f8fafc; border-left: 3px solid var(--blue); }
+@media (max-width: 750px) { .vigilance-stats { grid-template-columns: 1fr; } .rti-modal { padding: 12px; } }
 
 /* REQUIRED VS VERIFIED */
 
@@ -1469,4 +1579,23 @@ border-left: 3px solid var(--blue);
 background: #f8fafc;
 font: 10px/1.5 "JetBrains Mono", monospace;
 color: #334155;
+}
+
+.ledger-root {
+display: flex;
+justify-content: space-between;
+gap: 12px;
+align-items: center;
+padding: 11px 12px;
+margin-bottom: 10px;
+border: 1px solid #bbf7d0;
+border-radius: 8px;
+background: #f0fdf4;
+font-size: 10px;
+}
+
+.ledger-root .hash {
+max-width: 75%;
+overflow: hidden;
+text-overflow: ellipsis;
 }

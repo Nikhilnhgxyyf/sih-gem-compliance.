@@ -1,4 +1,5 @@
 import os
+import hashlib
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
@@ -10,6 +11,8 @@ from schemas import EvidenceNode, RuleNode, EvidenceCorrectionRequest
 from engine import ProcurementIntelligenceEngine, check_margin, format_rule_report
 from extraction import extract_from_documents, extract_bidder_only, build_engine_inputs
 from demo_fixtures import try_fixture_extraction
+from tender_rigging_engine import evaluate_tender_restrictiveness
+from rti_generator import generate_rti_legal_brief
 
 app = FastAPI(
     title="GeM AI Auditor V3",
@@ -43,6 +46,7 @@ app.add_middleware(
 
 DEFAULT_TENDER_DEADLINE = datetime(2026, 8, 30, tzinfo=timezone.utc)
 MAX_FILE_SIZE_MB = 15
+DEMO_TENDER_ID = "GEM/2026/B/8847213"
 
 # One engine per bidder, so a tender can be evaluated against several
 # bidders at once instead of each upload wiping out the last one.
@@ -59,6 +63,34 @@ active_bidder_id: Optional[str] = None
 current_tender_rules: Optional[List[RuleNode]] = None
 current_tender_deadline: Optional[datetime] = None
 current_tender_filename: Optional[str] = None
+current_tender_department: Optional[str] = None
+
+
+def normalize_tender_department(value: Optional[str]) -> Optional[str]:
+    """Keep tender authority metadata concise and safe for display/audit logs."""
+    if not value:
+        return None
+    normalized = " ".join(value.split())
+    if not normalized:
+        return None
+    if len(normalized) > 200:
+        raise HTTPException(status_code=422, detail="Tender department must be 200 characters or fewer.")
+    return normalized
+
+
+def clear_audit_session() -> dict:
+    """Remove every in-memory tender and bidder from the active audit session."""
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
+
+    cleared_bidders = sum(1 for bidder_id in engines if bidder_id != "EMPTY")
+    engines.clear()
+    bidder_labels.clear()
+    active_bidder_id = None
+    current_tender_rules = None
+    current_tender_deadline = None
+    current_tender_filename = None
+    current_tender_department = None
+    return {"cleared_bidders": cleared_bidders}
 
 
 def current_engine() -> ProcurementIntelligenceEngine:
@@ -107,8 +139,11 @@ async def ingest_documents(
     bidder_label: Optional[str] = Form(
         None, description="How this bidder should show up in the comparison table, e.g. the company name"
     ),
+    tender_department: Optional[str] = Form(
+        None, description="Optional procuring government department or authority; overrides extracted tender metadata."
+    ),
 ):
-    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename
+    global active_bidder_id, current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
 
     bidder_payload = []
     for f in bidder_files:
@@ -142,7 +177,14 @@ async def ingest_documents(
     if "error" in extraction:
         raise HTTPException(status_code=502, detail=f"AI extraction failed: {extraction['error']}")
 
-    evidence_nodes, freshly_extracted_rules = build_engine_inputs(extraction)
+    document_hashes = {
+        document["filename"]: hashlib.sha256(document["data"]).hexdigest()
+        for document in bidder_payload + ([tender_payload] if tender_payload else [])
+    }
+    extraction_timestamp = datetime.now(timezone.utc)
+    evidence_nodes, freshly_extracted_rules = build_engine_inputs(
+        extraction, document_hashes=document_hashes, extraction_timestamp=extraction_timestamp
+    )
 
     if tender_payload is not None:
         # A tender was supplied this call — (re)compile and store its ruleset.
@@ -156,6 +198,9 @@ async def ingest_documents(
         current_tender_rules = freshly_extracted_rules
         current_tender_deadline = deadline
         current_tender_filename = tender_payload["filename"]
+        current_tender_department = normalize_tender_department(
+            tender_department or extraction.get("tender_department")
+        )
         rule_nodes = freshly_extracted_rules
     elif reused_tender:
         # No tender this call, but one is already active — reuse its exact
@@ -185,17 +230,21 @@ async def ingest_documents(
     new_engine.rebuild_dependencies()
     evaluations = new_engine.evaluate_all_rules()
 
-    new_engine._append_to_ledger(
+    ingestion_event = new_engine._append_to_ledger(
         action="DOCUMENT_INGESTION",
         actor="AI_EXTRACTION",
         payload={
             "bidder_files": [f["filename"] for f in bidder_payload],
             "tender_file": tender_payload["filename"] if tender_payload else (current_tender_filename if reused_tender else None),
             "tender_rules_reused": reused_tender,
+            "tender_department": current_tender_department,
             "evidence_count": len(evidence_nodes),
             "rule_count": len(rule_nodes),
+            "document_hashes": document_hashes,
         },
     )
+    for node in new_engine.evidence_nodes.values():
+        node.originating_event = ingestion_event
 
     engines[bidder_id] = new_engine
     bidder_labels[bidder_id] = label
@@ -219,11 +268,27 @@ async def reset_tender():
     """Clears the cached tender ruleset. Call this before starting a
     genuinely different tender, so its requirements don't get silently
     reused for the next bidder uploaded."""
-    global current_tender_rules, current_tender_deadline, current_tender_filename
+    global current_tender_rules, current_tender_deadline, current_tender_filename, current_tender_department
     current_tender_rules = None
     current_tender_deadline = None
     current_tender_filename = None
+    current_tender_department = None
     return {"message": "Tender ruleset cleared. Next upload with a tender_file will compile a fresh one."}
+
+
+@app.post("/api/v3/session/reset")
+async def reset_audit_session():
+    """Start a clean audit, including the tender, all bidders and their ledgers.
+
+    The application process is shared by every browser connected to this
+    deployment, so this explicit endpoint prevents a new officer or laptop
+    from inheriting the previous session's in-memory data.
+    """
+    reset = clear_audit_session()
+    return {
+        "message": "Audit session reset. Upload a tender and bidder documents to start a new audit.",
+        **reset,
+    }
 
 
 @app.get("/api/v3/tender/current")
@@ -232,6 +297,7 @@ async def current_tender():
         "tender_filename": current_tender_filename,
         "rule_count": len(current_tender_rules) if current_tender_rules else 0,
         "deadline": current_tender_deadline.isoformat() if current_tender_deadline else None,
+        "department": current_tender_department,
     }
 
 
@@ -329,6 +395,31 @@ async def bidder_report(bidder_id: str):
         "latest_hash": eng.ledger[-1].event_hash if eng.ledger else None,
         "rule_reports": rule_reports,
     }
+
+
+@app.get("/api/v3/tender/restrictiveness")
+async def tender_restrictiveness():
+    """Stress-test the active tender locally against the fixed vendor market."""
+    if not current_tender_rules:
+        raise HTTPException(status_code=409, detail="Upload a tender before running the pre-publish stress test.")
+    return {
+        "tender_id": DEMO_TENDER_ID,
+        "department": current_tender_department,
+        **evaluate_tender_restrictiveness(current_tender_rules),
+    }
+
+
+@app.get("/api/v3/bidders/{bidder_id}/rti-brief")
+async def rti_legal_brief(bidder_id: str):
+    if bidder_id not in engines or bidder_id == "EMPTY":
+        raise HTTPException(status_code=404, detail=f"Bidder '{bidder_id}' not found.")
+    engine = engines[bidder_id]
+    decision = engine.calculate_overall_compliance()
+    if decision.decision != "FAIL":
+        raise HTTPException(status_code=409, detail="An RTI rejection brief is only available for rejected bidders.")
+    brief = generate_rti_legal_brief(bidder_id, DEMO_TENDER_ID, engine, engine.ledger[-1].event_hash)
+    brief["bidder_name"] = bidder_labels.get(bidder_id, bidder_id)
+    return brief
 
 
 @app.get("/api/v3/bidders")
@@ -434,6 +525,7 @@ async def officer_override(request: EvidenceCorrectionRequest):
             changed_node_id=request.node_id,
             new_value=request.new_value,
             actor=request.actor,
+            reason=request.reason,
         )
         return {
             "message": "Evidence correction propagated.",
@@ -504,6 +596,7 @@ async def audit_chain():
         "message": message,
         "ledger_length": len(engine.ledger),
         "ledger": [e.model_dump(mode="json") for e in engine.ledger],
+        "merkle_root": engine.merkle_root(),
     }
 
 
@@ -534,4 +627,5 @@ async def get_engine_state():
         "edges": [e.model_dump(mode="json") for e in engine.edges],
         "rule_statuses": rule_statuses,
         "ledger": [e.model_dump(mode="json") for e in engine.ledger],
+        "merkle_root": engine.merkle_root(),
     }
