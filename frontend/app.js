@@ -319,6 +319,7 @@ async function resetAuditSession() {
         $("tenderDepartmentInput").value = "";
         $("ingestError").classList.add("hidden");
         $("ingestSummary").classList.add("hidden");
+        $("syntheticBanner").classList.add("hidden");
         renderIngestChips();
 
         if (evidenceNetwork) {
@@ -409,6 +410,8 @@ function renderDashboardDetails() {
     const timestamps = Object.values(state.ruleEvaluations || {}).map(item => item.evaluated_at).filter(Boolean);
     $("lastEvaluated").textContent = timestamps.length ? formatDate(timestamps[0]) : "Not evaluated";
     $("headerIntegrity").textContent = state.integrity?.chain_valid ? "Verified" : "Pending";
+    $("capsuleAuditId").textContent = state.auditId;
+    $("capsuleDetails").textContent = `Decision: ${decisionLabel(evaluation.decision)} · Score: ${Number(evaluation.compliance_score || 0).toFixed(2)} · Evaluation timestamp: ${timestamps.length ? formatDate(timestamps[0]) : "Not available"}`;
 
     const findings = [];
     const orderedRules = [...state.rules].sort((left, right) => {
@@ -549,6 +552,16 @@ const EVIDENCE_STATUS_COLOR = {
 };
 
 const RULE_STATUS_COLOR = { PASS: "#16a34a", FAIL: "#dc2626", REVIEW: "#f59e0b" };
+
+let evidenceFilter = "ALL";
+function renderEvidenceTable() {
+    const critical = new Set((state.criticalEvidence || []).filter(item => item.impact_label === "DECISION-CRITICAL").map(item => item.evidence_id));
+    const rows = state.evidence.filter(node => evidenceFilter === "ALL" || (evidenceFilter === "CRITICAL" ? critical.has(node.node_id) : node.status === evidenceFilter));
+    const validity = node => node.valid_until ? `Until ${formatDate(node.valid_until)}` : node.valid_from ? `From ${formatDate(node.valid_from)}` : "Unknown";
+    const body = rows.map(node => `<div class="evidence-row" onclick="selectEvidence('${escapeJs(node.node_id)}')"><div><strong>${escapeHtml(node.node_id)}</strong><small>${escapeHtml(node.entity_name)}</small></div><div>${escapeHtml(String(node.extracted_value))}</div><div>${escapeHtml(node.source_doc)}</div><div>${Math.round(Number(node.confidence || 0) * 100)}%</div><div>${escapeHtml(validity(node))}</div><div><span class="evidence-status ${escapeHtml(node.status || "UNVERIFIED")}">${escapeHtml(node.status || "UNVERIFIED")}</span></div><div>${critical.has(node.node_id) ? "DECISION-CRITICAL" : "Supporting"}</div></div>`).join("");
+    const header = '<div class="evidence-row header"><div>EVIDENCE</div><div>VALUE</div><div>SOURCE</div><div>CONFIDENCE</div><div>VALIDITY</div><div>STATUS</div><div>IMPACT</div></div>';
+    $("evidenceTable").innerHTML = state.evidence.length ? header + (body || '<div class="empty-state">No evidence matches this filter.</div>') : '<div class="empty-state">No evidence loaded.</div>';
+}
 
 function renderEvidenceGraph() {
 
@@ -1715,6 +1728,7 @@ async function loadTrustCenter() {
         state.causalGraph = causalGraph;
         state.integrity = integrity;
         state.decisionDNA = decisionDNA;
+        state.criticalEvidence = critical.critical_evidence || [];
         renderOverview();
         renderEvidenceGraph();
         renderReplay(replay);
@@ -1866,6 +1880,7 @@ $("ledgerCount").textContent =
 
 renderOverview();
 renderEvidenceGraph();
+renderEvidenceTable();
 renderRules();
 renderLedger();
 
@@ -1886,12 +1901,33 @@ $("loadDemoButton").addEventListener("click", async () => {
     try {
         const result = await api("/api/v3/demo/seed", { method: "POST" });
         await Promise.all([loadBackendState(), loadTenderStatus(), loadBidderComparison()]);
+        $("syntheticBanner").classList.remove("hidden");
         document.querySelector('[data-section="overview"]').click();
         toast(`${result.message} Results are clearly marked synthetic.`);
     } catch (error) {
         toast(`Could not load synthetic demo: ${error.message}`);
     }
 });
+
+document.querySelectorAll(".filter-button").forEach(button => button.addEventListener("click", () => {
+    evidenceFilter = button.dataset.evidenceFilter;
+    document.querySelectorAll(".filter-button").forEach(item => item.classList.toggle("active", item === button));
+    renderEvidenceTable();
+}));
+
+async function capsuleAction(action) {
+    if (!state.auditId || state.auditId === "GEMA-SIH-001") return toast("Load an audit first.");
+    try {
+        const endpoint = action === "save" ? `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/save` : `/api/v3/audits/${encodeURIComponent(state.auditId)}/capsule/${action}`;
+        const result = await api(endpoint, { method: action === "export" ? "GET" : "POST" });
+        $("capsuleResult").textContent = action === "export" ? "Capsule export is ready in the response payload." : `${action.toUpperCase()} completed: ${result.status || result.capsule_integrity?.status || "verified"}.`;
+        $("capsuleResult").classList.remove("empty-state");
+    } catch (error) { toast(`Capsule ${action} failed: ${error.message}`); }
+}
+$("saveCapsuleButton").addEventListener("click", () => capsuleAction("save"));
+$("exportCapsuleButton").addEventListener("click", () => capsuleAction("export"));
+$("replayCapsuleButton").addEventListener("click", () => capsuleAction("replay"));
+$("verifyCapsuleButton").addEventListener("click", () => capsuleAction("verify"));
 
 $("showWhyButton").addEventListener("click", () => loadDecisionStory(false));
 $("showSkeletonButton").addEventListener("click", () => loadDecisionStory(true));

@@ -229,6 +229,7 @@ border-radius: 8px;
 background: #eff6ff;
 font-size: 11px;
 }
+.synthetic-banner { margin: -12px 0 22px; padding: 10px 14px; border: 1px solid #fbbf24; border-left: 4px solid #d97706; border-radius: 8px; background: #fffbeb; color: #92400e; font: 700 10px "JetBrains Mono", monospace; letter-spacing: .3px; }
 
 .context-label {
 font-family: "JetBrains Mono", monospace;
@@ -941,6 +942,7 @@ font-size: 9px;
 .critical-evidence { display: grid; gap: 8px; }.critical-row { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 12px; font-size: 11px; }
 .critical-metrics { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); }.impact-label-badge { border-radius: 5px; padding: 5px 7px; font-family: "JetBrains Mono", monospace; font-size: 8px; font-weight: 700; background: #e2e8f0; }.impact-label-badge.DECISION-CRITICAL { background: #fee2e2; color: #991b1b; }.impact-label-badge.SUPPORTING { background: #dbeafe; color: #1d4ed8; }
 .dna-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 10px; }.dna-details summary { color: var(--blue); cursor: pointer; font-weight: 700; }.dna-details code { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 9px; }
+.evidence-table-panel { margin-top: 18px; overflow: hidden; }.evidence-filter { display: flex; gap: 7px; flex-wrap: wrap; padding-bottom: 12px; }.filter-button { border: 1px solid var(--border); background: #fff; border-radius: 16px; padding: 6px 10px; color: var(--muted); font-size: 10px; font-weight: 700; }.filter-button.active { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }.evidence-table { overflow-x: auto; }.evidence-row { display: grid; grid-template-columns: 115px minmax(100px, 1fr) minmax(130px, 1fr) 75px 135px 100px 110px; gap: 10px; align-items: center; min-width: 850px; padding: 11px 8px; border-top: 1px solid var(--border); font-size: 10px; cursor: pointer; }.evidence-row:hover { background: #f8fbff; }.evidence-row.header { color: var(--muted); background: #f8fafc; cursor: default; font: 700 8px "JetBrains Mono", monospace; }.evidence-row small { display: block; color: var(--muted); margin-top: 3px; }.evidence-status { display: inline-flex; width: fit-content; padding: 4px 6px; border-radius: 4px; font: 700 8px "JetBrains Mono", monospace; background: #e2e8f0; }.evidence-status.VERIFIED { background: #dcfce7; color: #166534; }.evidence-status.EXPIRED, .evidence-status.CONFLICTING { background: #fee2e2; color: #991b1b; }.evidence-status.UNVERIFIED { background: #fef3c7; color: #92400e; }.capsule-hero { display: flex; justify-content: space-between; gap: 24px; align-items: center; border-left: 4px solid #1e3a5f; }.capsule-hero h2 { margin: 6px 0; }.capsule-details { color: var(--muted); font-size: 11px; }.capsule-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }.capsule-result { margin-top: 18px; }
 
 .principle-list {
 margin-top: 20px;
