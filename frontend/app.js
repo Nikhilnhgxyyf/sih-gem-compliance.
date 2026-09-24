@@ -188,12 +188,22 @@ function fileChipHtml(name, onRemove) {
     `;
 }
 
+/* =========================================================
+   REPLACE your existing "$("ingestButton").addEventListener(...)"
+   handler ENTIRELY with this version. Only change: it now reads the
+   raw response so a 409 integrity block can be handled specially
+   instead of falling into the generic error path. Everything else
+   (FormData building, success summary, dashboard refresh) is identical
+   to what you already have.
+   ========================================================= */
+
 $("ingestButton").addEventListener("click", async () => {
 
     const errorBox = $("ingestError");
     const summaryBox = $("ingestSummary");
     errorBox.classList.add("hidden");
     summaryBox.classList.add("hidden");
+    $("integrityWarning").classList.add("hidden");
 
     if (ingestState.bidderFiles.length === 0) {
         errorBox.textContent = "Add at least one bidder document first.";
@@ -209,46 +219,126 @@ $("ingestButton").addEventListener("click", async () => {
     const department = $("tenderDepartmentInput").value.trim();
     if (department) formData.append("tender_department", department);
 
+    showLoading(true);
+    let response, body;
     try {
+        response = await fetch(`${API_BASE}/api/v3/ingest-documents`, { method: "POST", body: formData });
+        body = await response.json();
+    } catch (error) {
+        showLoading(false);
+        errorBox.textContent = `Extraction failed: ${error.message}`;
+        errorBox.classList.remove("hidden");
+        return;
+    }
+    showLoading(false);
 
-        const result = await api("/api/v3/ingest-documents", {
+    if (response.status === 409 && body.blocked) {
+        renderIntegrityWarning(body);
+        return;
+    }
+
+    if (!response.ok) {
+        errorBox.textContent = `Extraction failed: ${body.detail || "HTTP " + response.status}`;
+        errorBox.classList.remove("hidden");
+        return;
+    }
+
+    const result = body;
+    summaryBox.innerHTML = `
+        <strong>${escapeHtml(result.bidder_label)}</strong> —
+        <strong>${result.evidence_count}</strong> evidence facts extracted from
+        <strong>${result.documents_processed.length}</strong> document(s),
+        <strong>${result.rule_count}</strong> requirement(s)
+        ${result.tender_rules_reused ? "reused from the current tender" : "compiled"}.
+        Decision: <strong>${escapeHtml(result.compliance.decision)}</strong>
+        (${result.compliance.compliance_score.toFixed(1)}/100).
+    `;
+    summaryBox.classList.remove("hidden");
+    toast(`${result.bidder_label} processed — knowledge graph updated.`);
+
+    ingestState = { tenderFile: null, bidderFiles: [] };
+    renderIngestChips();
+    $("bidderLabelInput").value = "";
+    $("tenderDepartmentInput").value = "";
+
+    await loadBackendState();
+    await loadBidderComparison();
+    await loadTenderStatus();
+    document.querySelector('[data-section="overview"]').click();
+});
+
+
+/* =========================================================
+   NEW — integrity warning panel + "GEMA misunderstood?" override
+   (append this whole block anywhere in app.js)
+   ========================================================= */
+
+function renderIntegrityWarning(body) {
+    $("integrityWarningMessage").textContent = body.message;
+
+    $("integrityWarningRules").innerHTML = body.per_rule.map(r => `
+        <div class="graph-row">
+            <div class="graph-node">
+                <div class="node-type">${escapeHtml(r.rule_id)}${body.outlier_rule_ids.includes(r.rule_id) ? " — FLAGGED" : ""}</div>
+                <strong>${r.pass_rate_pct}% pass rate</strong>
+                <small>${escapeHtml(r.clause_text)}</small>
+            </div>
+        </div>
+    `).join("");
+
+    $("integrityWarningPrecedents").innerHTML = body.similar_precedents.length
+        ? `<div class="detail-row"><label>SIMILAR PAST CASES</label></div>` +
+          body.similar_precedents.map(p => `
+              <div class="source-quote">
+                  <strong>${escapeHtml(p.kind)}</strong> by ${escapeHtml(p.actor)} (similarity ${p.similarity}, ${p.method}):
+                  "${escapeHtml(p.reason)}"
+              </div>
+          `).join("")
+        : "";
+
+    $("integrityWarning").classList.remove("hidden");
+    $("integrityWarning").scrollIntoView({ behavior: "smooth" });
+}
+
+$("integrityOverrideButton").addEventListener("click", async () => {
+    const reason = $("integrityOverrideReason").value.trim();
+    const actor = $("integrityOverrideActor").value.trim() || "Procurement Officer";
+
+    if (reason.length < 10) {
+        toast("Provide a specific reason (at least 10 characters) to proceed.");
+        return;
+    }
+
+    try {
+        const result = await api("/api/v3/tender/integrity-override", {
             method: "POST",
-            body: formData
+            body: JSON.stringify({ reason, actor }),
         });
 
-        summaryBox.innerHTML = `
-            <strong>${escapeHtml(result.bidder_label)}</strong> —
-            <strong>${result.evidence_count}</strong> evidence facts extracted from
-            <strong>${result.documents_processed.length}</strong> document(s),
-            <strong>${result.rule_count}</strong> requirement(s)
-            ${result.tender_rules_reused ? "reused from the current tender" : "compiled"}.
-            Decision: <strong>${escapeHtml(result.compliance.decision)}</strong>
-            (${result.compliance.compliance_score.toFixed(1)}/100).
-        `;
-        summaryBox.classList.remove("hidden");
-
-        toast(`${result.bidder_label} processed — knowledge graph updated.`);
+        $("integrityWarning").classList.add("hidden");
+        toast(`Override logged — ${result.bidder_label} processed. Decision: ${result.compliance.decision}.`);
 
         ingestState = { tenderFile: null, bidderFiles: [] };
         renderIngestChips();
-        $("bidderLabelInput").value = "";
-        $("tenderDepartmentInput").value = "";
+        $("integrityOverrideReason").value = "";
+        $("integrityOverrideActor").value = "";
 
         await loadBackendState();
         await loadBidderComparison();
         await loadTenderStatus();
-
-        // Jump straight to Overview so the officer sees the result,
-        // instead of leaving them on the now-empty ingest form.
         document.querySelector('[data-section="overview"]').click();
 
     } catch (error) {
-
-        errorBox.textContent = `Extraction failed: ${error.message}`;
-        errorBox.classList.remove("hidden");
+        toast(`Override failed: ${error.message}`);
     }
-
 });
+
+window.downloadIntegrityAnnexure = function () {
+    window.open(`${API_BASE}/api/v3/tender/integrity-annexure`, "_blank");
+};
+        
+
+
 
 async function loadTenderStatus() {
 
