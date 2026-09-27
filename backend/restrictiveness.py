@@ -1,47 +1,4 @@
-"""
-restrictiveness.py
 
-TENDER RESTRICTIVENESS INDEX
-============================
-Every other check in this system asks: "does this ONE bidder satisfy the
-tender?" This module asks the opposite question, using the exact same
-compiled rule tree: "if a broad, realistic spread of firms CAPABLE OF
-BIDDING ON A PROJECT THIS SIZE tried to bid, what fraction even could?"
-
-If a tender's rules mathematically eliminate almost everyone in that
-reference pool, that is worth a human's attention BEFORE taxpayer money
-is committed -- whether the cause is an honest drafting mistake or a
-clause combination quietly written to fit one pre-selected bidder.
-
-No new AI call, no new architecture: this reuses ProcurementIntelligenceEngine
-and evaluate_all_rules() exactly as they already exist. It just points them
-at a synthetic population instead of one real bidder.
-
-WHY THE POPULATION IS SCALED TO THE TENDER, NOT FIXED NATIONWIDE:
-An earlier version tested every tender against one fixed nationwide MSME
-population. That silently mislabeled EVERY large, legitimate tender as
-"hyper-restrictive" -- a Rs.120 Cr hospital tender will always exclude the
-vast majority of India's small businesses, and that is normal, not rigging.
-So the reference population here is centered on the tender's own
-estimated_contract_value: it asks "of the firms realistically large enough
-to even attempt a project this size, what fraction clears the rules?" --
-which is what actually distinguishes a reasonable capability bar from a
-disproportionate one.
-
-HONESTY NOTE (say this out loud if a judge asks):
-The population below is a HAND-BUILT, ILLUSTRATIVE spread for stress-testing
-rule structure -- it is NOT real MCA/Udyam registry data, and this module
-never claims otherwise. Treat the verdict as a prompt for a human to look
-closer, exactly like every other REVIEW flag in this system -- never as a
-finished accusation.
-
-KNOWN v1 LIMITATION (say this too, it shows you understand your own scope):
-This models financial capacity, experience, and registration-type
-restrictiveness. It does NOT yet model purely categorical/geographic
-exclusions (e.g. "HQ must be in this exact pin code") that don't affect
-company size at all -- that needs its own detector and is a clear v2
-extension, not something we're claiming to solve tonight.
-"""
 
 import random
 from datetime import datetime, timedelta, timezone
