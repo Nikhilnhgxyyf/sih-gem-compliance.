@@ -16,17 +16,6 @@ TWO RETRIEVAL MODES, SAME INTERFACE:
   - Deterministic token-overlap fallback, always available, no network
     call -- same demo-safety guarantee as the rest of this project. A
     Gemini outage should never take a feature dark on demo day.
-
-HONESTY NOTE: retrieval surfaces similar PAST human decisions. It does
-not verify they were correct, and it never overrides current evaluation
--- it is a "here is what a human decided last time" prompt for the
-officer, not a rule, and not a claim that the past decision was right.
-
-VERIFY BEFORE A LIVE DEMO: the embed_text() call shape matches the
-google-genai SDK's documented embeddings method at the time this was
-written, but SDK versions move fast. Test that one call yourself against
-your installed google-genai version. The deterministic fallback needs no
-such verification -- it is pure Python, already tested below.
 """
 
 import math
