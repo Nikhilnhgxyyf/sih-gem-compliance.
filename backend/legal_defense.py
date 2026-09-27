@@ -9,17 +9,6 @@ This module turns a decision the engine already computed into a formal,
 citable document: which clause failed, what evidence caused it, the exact
 sentence and page it came from, and the ledger hash backing it up.
 
-Nothing here is invented at generation time. Every fact placed in the PDF
-(clause text, source document, page number, quoted sentence, ledger hash)
-already exists in the engine's own state -- this module only formats it.
-
-HONESTY NOTE (say this if asked): this is NOT a legally binding digital
-signature in the Digital Signature Certificate / PKI sense. It is a
-formatted report whose content is backed by the engine's own SHA-256
-hash-chained ledger entry -- so the *content* is provably unaltered after
-generation, which is the part that actually matters for an RTI or court
-dispute. Calling it "cryptographically signed" would overstate what's
-here; "ledger-backed" is the accurate, defensible claim.
 """
 
 from datetime import datetime, timezone
