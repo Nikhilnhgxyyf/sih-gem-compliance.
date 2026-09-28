@@ -208,10 +208,20 @@ $("ingestButton").addEventListener("click", async () => {
     let response, body;
     try {
         response = await fetch(`${API_BASE}/api/v3/ingest-documents`, { method: "POST", body: formData });
-        body = await response.json();
+        try {
+            body = await response.json();
+        } catch {
+            body = { detail: `The server returned HTTP ${response.status} without a readable message — it may have timed out. Try again in a moment.` };
+        }
     } catch (error) {
         showLoading(false);
-        errorBox.textContent = `Extraction failed: ${error.message}`;
+        // fetch() only throws (rather than returning a status) when no HTTP
+        // response arrived at all -- server asleep, connection dropped, or
+        // the request timed out on the way.
+        const networkFailure = error instanceof TypeError;
+        errorBox.textContent = networkFailure
+            ? "Could not reach the analysis server. It may still be waking up or the request timed out — wait a few seconds and press Analyze Evidence again."
+            : `Extraction failed: ${error.message}`;
         errorBox.classList.remove("hidden");
         return;
     }
@@ -1240,13 +1250,6 @@ function renderBlastResult(result) {
         </div>
 
         <div class="detail-row">
-            <label>MANDATORY RULES AFFECTED</label>
-            <strong>
-                ${result.mandatory_rules_affected || 0}
-            </strong>
-        </div>
-
-        <div class="detail-row">
             <label>SCORE AT RISK IF INVALIDATED</label>
             <strong>−${Number(result.score_at_risk || 0).toFixed(2)} points</strong>
         </div>
@@ -1872,5 +1875,4 @@ function formatDate(value) {
 
 loadBackendState();
 loadTenderStatus();
-
-       
+        
