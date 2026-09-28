@@ -1,9 +1,12 @@
 import os
+import asyncio
 import hashlib
+import logging
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -48,6 +51,32 @@ app.add_middleware(
 
 DEFAULT_TENDER_DEADLINE = datetime(2026, 8, 30, tzinfo=timezone.utc)
 MAX_FILE_SIZE_MB = 15
+EXTRACTION_TIMEOUT_SECONDS = float(os.environ.get("EXTRACTION_TIMEOUT_SECONDS", "110"))
+
+logger = logging.getLogger("gema")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Turn any unexpected crash into a normal JSON error the frontend can show.
+
+    An exception that escapes a route is answered by Starlette's outermost
+    error middleware, which sits OUTSIDE CORSMiddleware -- so that 500 goes
+    out with no CORS headers, and the browser hides it behind a bare
+    "Failed to fetch". Adding the CORS header here lets the real message
+    through, and logging the traceback puts the cause in the Render logs.
+    """
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    headers = {}
+    origin = request.headers.get("origin")
+    if origin and origin in ALLOWED_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Server error while processing this request ({type(exc).__name__}: {exc})"},
+        headers=headers,
+    )
 
 # One engine per bidder, so a tender can be evaluated against several
 # bidders at once instead of each upload wiping out the last one.
@@ -73,6 +102,31 @@ tender_integrity_ledger: List[dict] = []
 tender_integrity_cleared_for: Optional[str] = None
 # -- Advanced RAG: institutional memory across tenders, in-session ------
 precedent_store: List[dict] = []
+
+
+def _parse_money(raw: Any) -> Optional[float]:
+    """Best-effort parse of an LLM-extracted money value into rupees.
+
+    Handles '1250000', '12,50,000', 'Rs. 12,50,000', '12.5 Lakh', '3 Crore'.
+    Returns None instead of raising, so one oddly formatted value can't take
+    down a whole ingestion.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    text = re.sub(r"\b(rs|inr)\b\.?", "", text)  # drop the currency prefix so its dot isn't read as a decimal point
+    multiplier = 1.0
+    if "crore" in text or re.search(r"\bcr\b", text):
+        multiplier = 1e7
+    elif "lakh" in text or "lac" in text:
+        multiplier = 1e5
+    cleaned = re.sub(r"[^0-9.]", "", text.replace(",", "")).strip(".")
+    if not cleaned or cleaned.count(".") > 1:
+        return None
+    try:
+        return float(cleaned) * multiplier
+    except ValueError:
+        return None
 
 
 def normalize_tender_department(value: Optional[str]) -> Optional[str]:
@@ -182,12 +236,37 @@ async def ingest_documents(
 
     reused_tender = tender_payload is None and current_tender_rules is not None
 
-    if tender_payload is not None:
-        extraction = try_fixture_extraction(bidder_payload, tender_payload) \
-            or extract_from_documents(bidder_payload, tender_payload)
-    else:
-        extraction = try_fixture_extraction(bidder_payload, None) \
-            or extract_bidder_only(bidder_payload)
+    # extract_from_documents()/extract_bidder_only() call the Gemini SDK
+    # synchronously. Calling them directly here would block this whole
+    # process's event loop for the entire round trip -- on a multi-document
+    # upload that can be tens of seconds, during which nothing else on this
+    # server (including Render's own health check) can be served, and the
+    # connection is liable to be killed before a response ever goes out.
+    # asyncio.to_thread runs the blocking call on a worker thread instead,
+    # so the event loop stays free for the rest of that wait.
+    try:
+        if tender_payload is not None:
+            extraction = try_fixture_extraction(bidder_payload, tender_payload)
+            if not extraction:
+                extraction = await asyncio.wait_for(
+                    asyncio.to_thread(extract_from_documents, bidder_payload, tender_payload),
+                    timeout=EXTRACTION_TIMEOUT_SECONDS,
+                )
+        else:
+            extraction = try_fixture_extraction(bidder_payload, None)
+            if not extraction:
+                extraction = await asyncio.wait_for(
+                    asyncio.to_thread(extract_bidder_only, bidder_payload),
+                    timeout=EXTRACTION_TIMEOUT_SECONDS,
+                )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"AI extraction took longer than {int(EXTRACTION_TIMEOUT_SECONDS)}s and was stopped. "
+                "Try again, or upload fewer / smaller documents at once."
+            ),
+        )
 
     if "error" in extraction:
         raise HTTPException(status_code=502, detail=f"AI extraction failed: {extraction['error']}")
@@ -215,10 +294,12 @@ async def ingest_documents(
 
         contract_value = next(
             (
-                float(fact["value"])
+                parsed
                 for doc in extraction.get("documents", [])
                 for fact in doc.get("facts", [])
                 if fact.get("entity_name") == "estimated_contract_value"
+                for parsed in [_parse_money(fact.get("value"))]
+                if parsed is not None
             ),
             None,
         )
@@ -865,3 +946,4 @@ async def get_engine_state():
         "ledger": [e.model_dump(mode="json") for e in engine.ledger],
         "merkle_root": engine.merkle_root(),
     }
+    
