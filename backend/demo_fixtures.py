@@ -1,28 +1,7 @@
 """
 demo_fixtures.py
 
-Cached, hand-verified extraction results for the real demo documents
-(1_TENDER_Hospital_Nashik.pdf + the 3 real bidder PDFs). Used to bypass
-Gemini entirely for known documents, so a live 503 spike can't take down
-a presentation. Every number here was read directly off the real PDFs,
-not invented.
 
-Drop this file next to engine.py / extraction.py / main.py.
-
-Wire-up (main.py, ~2 lines changed, see patch notes at the bottom):
-    from demo_fixtures import try_fixture_extraction
-    extraction = try_fixture_extraction(bidder_payload, tender_payload) \
-                 or extract_from_documents(bidder_payload, tender_payload)
-
-Everything downstream of `extraction` (build_engine_inputs, the engine,
-blast radius, the ledger, counterfactuals) runs 100% for real — only the
-Gemini network call is skipped for recognised files. Any file that isn't
-one of the 4 known PDFs falls through to a real extraction call, so the
-system still behaves normally for anything else you hand it.
-
-Set DEMO_FIXTURE_ONLY=true to disable that live fallback entirely (an
-unrecognised file then raises a clear error instead of risking a 503
-mid-demo).
 """
 
 import os
